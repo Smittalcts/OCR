@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - On-Call Review Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .tab-btn {
+            padding: 0.75rem 1rem;
+            width: 50%;
+            border-bottom: 2px solid transparent;
+            font-weight: 600;
+            color: #6b7280;
+            cursor: pointer;
+        }
+        .tab-btn.active {
+            color: #3b82f6;
+            border-bottom-color: #3b82f6;
+        }
+    </style>
+</head>
+<body class="h-full flex items-center justify-center font-sans bg-gradient-to-br from-gray-50 to-gray-200">
+    <div class="w-full max-w-md bg-white rounded-2xl shadow-2xl p-8">
+        <h2 class="text-3xl font-bold text-center text-gray-800 mb-6">On-Call Review Agent</h2>
+
+        <div class="flex border-b border-gray-200 mb-6">
+            <button id="tab-login" class="tab-btn active" onclick="showTab('login')">Sign In</button>
+            <button id="tab-signup" class="tab-btn" onclick="showTab('signup')">Sign Up</button>
+        </div>
+
+        <div id="message-area" class="text-center p-2 rounded-lg mb-4 hidden"></div>
+
+        <form id="login-form" class="space-y-6">
+            <div>
+                <label for="login-username" class="block text-sm font-medium text-gray-700">Username</label>
+                <input id="login-username" name="username" type="text" required class="mt-1 block w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">
+            </div>
+            <div>
+                <label for="login-password" class="block text-sm font-medium text-gray-700">Password</label>
+                <input id="login-password" name="password" type="password" required class="mt-1 block w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">
+            </div>
+            <button type="submit" class="w-full px-6 py-3 bg-blue-500 text-white font-semibold rounded-lg shadow-md hover:bg-blue-600 transition">Sign In</button>
+        </form>
+
+        <form id="signup-form" class="space-y-6 hidden">
+            <div>
+                <label for="signup-username" class="block text-sm font-medium text-gray-700">Username</label>
+                <input id="signup-username" name="username" type="text" required class="mt-1 block w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">
+            </div>
+            <div>
+                <label for="signup-password" class="block text-sm font-medium text-gray-700">Password</label>
+                <input id="signup-password" name="password" type="password" required class="mt-1 block w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">
+            </div>
+            <div>
+                <label for="signup-role" class="block text-sm font-medium text-gray-700">Role</label>
+                <select id="signup-role" name="role" class="mt-1 block w-full p-3 border border-gray-300 rounded-lg shadow-sm bg-white focus:ring-blue-500 focus:border-blue-500">
+                    <option value="associate">Associate</option>
+                    <option value="manager">Manager</option>
+                </select>
+            </div>
+            <button type="submit" class="w-full px-6 py-3 bg-green-500 text-white font-semibold rounded-lg shadow-md hover:bg-green-600 transition">Create Account</button>
+        </form>
+    </div>
+
+<script>
+    const loginForm = document.getElementById('login-form');
+    const signupForm = document.getElementById('signup-form');
+    const msgArea = document.getElementById('message-area');
+
+    function showTab(tabName) {
+        if (tabName === 'login') {
+            document.getElementById('login-form').classList.remove('hidden');
+            document.getElementById('tab-login').classList.add('active');
+            document.getElementById('signup-form').classList.add('hidden');
+            document.getElementById('tab-signup').classList.remove('active');
+        } else {
+            document.getElementById('login-form').classList.add('hidden');
+            document.getElementById('tab-login').classList.remove('active');
+            document.getElementById('signup-form').classList.remove('hidden');
+            document.getElementById('tab-signup').classList.add('active');
+        }
+        msgArea.classList.add('hidden');
+    }
+
+    function showMessage(message, isError = false) {
+        msgArea.textContent = message;
+        msgArea.classList.remove('hidden', 'bg-green-100', 'text-green-700', 'bg-red-100', 'text-red-700');
+        if (isError) {
+            msgArea.classList.add('bg-red-100', 'text-red-700');
+        } else {
+            msgArea.classList.add('bg-green-100', 'text-green-700');
+        }
+    }
+
+    loginForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(loginForm);
+        
+        try {
+            const response = await fetch('/token', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                localStorage.setItem('accessToken', data.access_token);
+                window.location.href = '/app';
+            } else {
+                const error = await response.json();
+                showMessage(error.detail, true);
+            }
+        } catch (err) {
+            showMessage('An error occurred during login.', true);
+        }
+    });
+
+    signupForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(signupForm);
+        const data = Object.fromEntries(formData.entries());
+
+        try {
+            const response = await fetch('/signup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                showMessage(result.message, false);
+                showTab('login');
+                document.getElementById('login-username').value = data.username;
+            } else {
+                const error = await response.json();
+                showMessage(error.detail, true);
+            }
+        } catch (err) {
+            showMessage('An error occurred during sign up.', true);
+        }
+    });
+</script>
+</body>
+</html>

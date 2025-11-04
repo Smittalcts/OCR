@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>On-Call Review Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Base styles from original index.html */
+        .message p { margin: 0; }
+        .bot-message { align-self: flex-start; background-color: #e5e7eb; color: #1f2937; }
+        .user-message { align-self: flex-end; background-color: #3b82f6; color: white; }
+        .status-message { align-self: center; background-color: #f3f4f6; color: #6b7280; font-style: italic; font-size: 0.875rem; padding: 4px 10px !important; }
+        .evaluation-message { align-self: flex-start; background-color: #dbeafe; border-left: 4px solid #60a5fa; }
+        .topic-summary-message { align-self: flex-start; background-color: #e0f2fe; border-left: 4px solid #38bdf8; }
+        .final-score-message { align-self: center; background-color: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; font-weight: bold; }
+        .error-message { align-self: center; background-color: #fee2e2; color: #b91c1c; }
+        #chat-box::-webkit-scrollbar { width: 6px; }
+        #chat-box::-webkit-scrollbar-track { background: #f1f5f9; }
+        #chat-box::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        #chat-box::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        .typing-indicator { display: flex; align-items: center; padding: 12px; }
+        .typing-indicator span { height: 8px; width: 8px; border-radius: 50%; background-color: #94a3b8; margin: 0 2px; animation: bounce 1.4s infinite ease-in-out both; }
+        .typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+        .typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1.0); } }
+    </style>
+</head>
+<body class="h-full flex items-center justify-center font-sans bg-gradient-to-br from-gray-50 to-gray-200">
+    
+    <div id="dashboard-container" class="w-full max-w-4xl h-[95vh] bg-white rounded-2xl shadow-2xl flex flex-col p-4 md:p-6">
+        <div class="header flex justify-between items-center pb-4 border-b border-gray-200">
+            <h2 class="text-2xl font-bold text-gray-800">AI On-Call Review Dashboard</h2>
+            <div>
+                <span id="user-greeting" class="text-gray-600 mr-4"></span>
+                <button id="logout-btn" class="px-4 py-2 bg-red-500 text-white text-sm font-semibold rounded-lg shadow-md hover:bg-red-600 transition">Logout</button>
+            </div>
+        </div>
+        <div id="dashboard-content" class="flex-1 p-4 overflow-y-auto bg-gray-50 rounded-lg my-4">
+            </div>
+    </div>
+
+    <div id="interview-container" class="w-full max-w-2xl h-[90vh] bg-white rounded-2xl shadow-2xl flex flex-col p-4 md:p-6 hidden">
+        <div class="header text-center pb-4 border-b border-gray-200">
+            <h2 class="text-2xl font-bold text-gray-800">AI On-Call Review</h2>
+        </div>
+        <div id="chat-box" class="chat-box flex-1 p-4 overflow-y-auto flex flex-col gap-4 my-4 bg-gray-50 rounded-lg" style="scroll-behavior: smooth;">
+            </div>
+        <div class="input-container flex gap-3">
+            <input type="text" id="user-input" placeholder="Type your answer..." class="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition disabled:bg-gray-200" disabled>
+            <button id="send-btn" class="px-6 py-3 bg-blue-500 text-white font-semibold rounded-lg shadow-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition disabled:bg-blue-300 disabled:cursor-not-allowed" disabled>Send</button>
+        </div>
+        <div class="footer text-center pt-4 mt-4 border-t border-gray-200">
+            <button id="end-btn" class="w-full md:w-auto px-8 py-3 bg-red-500 text-white font-bold rounded-lg shadow-lg hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-75 transition">End & Get Final Score</button>
+        </div>
+    </div>
+
+    <div id="results-container" class="hidden w-full max-w-3xl bg-white rounded-2xl shadow-2xl flex-col p-6 md:p-8">
+        <div class="text-center pb-4 border-b border-gray-200">
+            <h2 class="text-3xl font-bold text-gray-800">Interview Results</h2>
+        </div>
+        <div id="final-summary-card" class="my-6 p-6 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl text-center shadow-lg">
+            </div>
+        <div id="topic-results-container" class="space-y-4">
+            </div>
+        <div class="text-center pt-6 mt-6 border-t border-gray-200">
+             <button id="back-to-dashboard-btn" class="w-full md:w-auto px-8 py-3 bg-blue-500 text-white font-bold rounded-lg shadow-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition">Back to Dashboard</button>
+        </div>
+    </div>
+
+
+<script>
+    // --- Global State ---
+    let currentInterviewId = null;
+    let currentUser = null;
+    const accessToken = localStorage.getItem('accessToken');
+
+    // --- DOM Elements ---
+    const dashboardContainer = document.getElementById('dashboard-container');
+    const dashboardContent = document.getElementById('dashboard-content');
+    const userGreeting = document.getElementById('user-greeting');
+    const logoutBtn = document.getElementById('logout-btn');
+    
+    const interviewContainer = document.getElementById('interview-container');
+    const chatBox = document.getElementById('chat-box');
+    const userInput = document.getElementById('user-input');
+    const sendBtn = document.getElementById('send-btn');
+    const endBtn = document.getElementById('end-btn');
+
+    const resultsContainer = document.getElementById('results-container');
+    const finalSummaryCard = document.getElementById('final-summary-card');
+    const topicResultsContainer = document.getElementById('topic-results-container');
+    const backToDashboardBtn = document.getElementById('back-to-dashboard-btn');
+
+    // --- API Fetch Helper ---
+    async function apiFetch(url, options = {}) {
+        const defaultOptions = {
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${accessToken}`
+            }
+        };
+        const response = await fetch(url, { ...defaultOptions, ...options });
+
+        if (response.status === 401) {
+            logout();
+            return;
+        }
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'An API error occurred');
+        }
+        return response.json();
+    }
+
+    // --- Initialization ---
+    document.addEventListener('DOMContentLoaded', async () => {
+        if (!accessToken) {
+            logout();
+            return;
+        }
+        try {
+            currentUser = await apiFetch('/api/users/me');
+            userGreeting.textContent = `Welcome, ${currentUser.username} (${currentUser.role})`;
+            if (currentUser.role === 'manager') {
+                loadManagerDashboard();
+            } else {
+                loadAssociateDashboard();
+            }
+        } catch (error) {
+            console.error('Failed to load user data:', error);
+            logout();
+        }
+    });
+
+    // --- Dashboard Rendering ---
+    async function loadManagerDashboard() {
+        dashboardContent.innerHTML = `
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <h3 class="text-xl font-semibold mb-4 text-gray-800">Schedule New Review</h3>
+                    <form id="schedule-form" class="space-y-4">
+                        <div>
+                            <label for="associate-select" class="block text-sm font-medium text-gray-700">Select Associate</label>
+                            <select id="associate-select" name="associate_id" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm bg-white"></select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Select Topics</label>
+                            <div class="mt-2 space-y-2">
+                                <label class="flex items-center"><input type="checkbox" name="topics" value="Incident Management" class="mr-2" checked> Incident Management</label>
+                                <label class="flex items-center"><input type="checkbox" name="topics" value="Problem Management" class="mr-2" checked> Problem Management</label>
+                                <label class="flex items-center"><input type="checkbox" name="topics" value="Change Management" class="mr-2" checked> Change Management</label>
+                            </div>
+                        </div>
+                        <button type="submit" class="w-full px-4 py-2 bg-green-500 text-white font-semibold rounded-lg shadow hover:bg-green-600 transition">Schedule</button>
+                    </form>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow md:col-span-2">
+                    <h3 class="text-xl font-semibold mb-4 text-gray-800">Scheduled Interview Status</h3>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Associate</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Score</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Scheduled On</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-table-body" class="bg-white divide-y divide-gray-200"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
+        
+        // Fetch data and populate
+        const data = await apiFetch('/api/manager/dashboard');
+        const associateSelect = document.getElementById('associate-select');
+        data.associates.forEach(a => {
+            associateSelect.innerHTML += `<option value="${a.id}">${a.username}</option>`;
+        });
+
+        const resultsTable = document.getElementById('results-table-body');
+        data.interview_results.forEach(r => {
+            resultsTable.innerHTML += `
+                <tr>
+                    <td class="px-4 py-2 whitespace-nowrap">${r.associate_username}</td>
+                    <td class="px-4 py-2 whitespace-nowrap">${r.status}</td>
+                    <td class="px-4 py-2 whitespace-nowrap">${r.final_score !== null ? `${r.final_score} / ${r.max_score}` : 'N/A'}</td>
+                    <td class="px-4 py-2 whitespace-nowrap">${new Date(r.created_at).toLocaleDateString()}</td>
+                </tr>`;
+        });
+
+        // Add form listener
+        document.getElementById('schedule-form').addEventListener('submit', scheduleInterview);
+    }
+
+    async function loadAssociateDashboard() {
+        const data = await apiFetch('/api/associate/dashboard');
+        dashboardContent.innerHTML = `
+            <div class="space-y-6">
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <h3 class="text-xl font-semibold mb-4 text-gray-800">Pending Reviews</h3>
+                    <div id="pending-interviews" class="space-y-3">
+                        ${data.pending.length === 0 ? '<p class="text-gray-500">No pending reviews.</p>' : ''}
+                    </div>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <h3 class="text-xl font-semibold mb-4 text-gray-800">Completed Reviews</h3>
+                    <div id="completed-interviews" class="space-y-3">
+                        ${data.completed.length === 0 ? '<p class="text-gray-500">No completed reviews.</p>' : ''}
+                    </div>
+                </div>
+            </div>`;
+
+        // Populate pending
+        data.pending.forEach(p => {
+            document.getElementById('pending-interviews').innerHTML += `
+                <div class="flex justify-between items-center p-3 bg-gray-50 rounded-md border">
+                    <div>
+                        <p class="font-medium">${JSON.parse(p.topics).join(', ')}</p>
+                        <p class="text-sm text-gray-500">Scheduled: ${new Date(p.created_at).toLocaleString()}</p>
+                    </div>
+                    <button onclick="startInterview('${p.id}')" class="px-4 py-2 bg-green-500 text-white font-semibold rounded-lg shadow hover:bg-green-600 transition">Start</button>
+                </div>`;
+        });
+        
+        // Populate completed
+        data.completed.forEach(c => {
+            document.getElementById('completed-interviews').innerHTML += `
+                <div class="flex justify-between items-center p-3 bg-gray-50 rounded-md border">
+                    <div>
+                        <p class="font-medium">${JSON.parse(c.topics).join(', ')}</p>
+                        <p class="text-sm text-gray-500">${c.final_summary}</p>
+                    </div>
+                    <span class="text-lg font-bold ${c.final_score >= (c.max_score * 0.7) ? 'text-green-600' : 'text-red-500'}">${c.final_score} / ${c.max_score}</span>
+                </div>`;
+        });
+    }
+
+    async function scheduleInterview(e) {
+        e.preventDefault();
+        const form = e.target;
+        const formData = new FormData(form);
+        const topics = Array.from(formData.getAll('topics'));
+        const associate_id = formData.get('associate_id');
+        
+        try {
+            await apiFetch('/api/manager/schedule', {
+                method: 'POST',
+                body: JSON.stringify({ associate_id: parseInt(associate_id), topics: topics })
+            });
+            alert('Interview scheduled!');
+            loadManagerDashboard(); // Refresh dashboard
+        } catch (error) {
+            console.error('Failed to schedule interview:', error);
+            alert('Error: ' + error.message);
+        }
+    }
+    
+    // --- Auth Functions ---
+    function logout() {
+        localStorage.removeItem('accessToken');
+        window.location.href = '/';
+    }
+
+    // --- Interview Chat Logic (Adapted from original) ---
+
+    function toggleInput(disabled) {
+        userInput.disabled = disabled;
+        sendBtn.disabled = disabled;
+    }
+
+    function addMessage(text, sender, className = '') {
+        const message = document.createElement('div');
+        message.classList.add('message', 'p-3', 'rounded-lg', 'max-w-[80%]', `${sender}-message`);
+        if (className) {
+            message.classList.add(className);
+        }
+        message.innerHTML = `<p>${text}</p>`;
+        chatBox.appendChild(message);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    function showTypingIndicator() {
+        const indicator = document.createElement('div');
+        indicator.id = 'typing-indicator';
+        indicator.classList.add('message', 'bot-message', 'typing-indicator');
+        indicator.innerHTML = `<span></span><span></span><span></span>`;
+        chatBox.appendChild(indicator);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    function removeTypingIndicator() {
+        const indicator = document.getElementById('typing-indicator');
+        if (indicator) {
+            indicator.remove();
+        }
+    }
+
+    async function startInterview(interviewId) {
+        currentInterviewId = interviewId;
+
+        // Show interview, hide dashboard
+        dashboardContainer.classList.add('hidden');
+        resultsContainer.classList.add('hidden');
+        interviewContainer.classList.remove('hidden');
+        
+        chatBox.innerHTML = '';
+        addMessage("Initializing interview...", 'bot', 'status-message');
+        
+        try {
+            const data = await apiFetch(`/api/interview/start/${currentInterviewId}`, { 
+                method: 'POST'
+            });
+
+            if (data.session_id && data.question) {
+                currentInterviewId = data.session_id; // Confirm ID
+                addMessage(data.question, 'bot');
+                toggleInput(false);
+                userInput.focus();
+            } else {
+                addMessage('Error starting interview. Please check the server logs.', 'bot', 'error-message');
+                showDashboard();
+            }
+        } catch (error) {
+            addMessage('Failed to connect. ' + error.message, 'bot', 'error-message');
+            setTimeout(showDashboard, 2000);
+        }
+    }
+
+    async function sendMessage() {
+        const messageText = userInput.value.trim();
+        if (messageText === '' || !currentInterviewId) return;
+
+        addMessage(messageText, 'user');
+        userInput.value = '';
+        toggleInput(true);
+        showTypingIndicator();
+
+        try {
+            const data = await apiFetch('/api/interview/submit', {
+                method: 'POST',
+                body: JSON.stringify({ interview_id: currentInterviewId, answer: messageText })
+            });
+            
+            removeTypingIndicator();
+            
+            if (data.evaluation) {
+                const evalText = `Feedback: ${data.evaluation.feedback} <br><b>[Answer Score: ${data.evaluation.score}/10]</b>`;
+                addMessage(evalText, 'bot', 'evaluation-message');
+            }
+
+            if (data.topic_score) {
+                const topicText = `<strong>Topic Complete: ${data.topic_score.topic}</strong><br>Summary: ${data.topic_score.summary}<br><strong>Topic Score: ${data.topic_score.score}/10</strong>`;
+                addMessage(topicText, 'bot', 'topic-summary-message');
+            }
+
+            if (data.interview_finished) {
+                addMessage("You have completed all topics. Click below to see your final score.", 'bot');
+                endBtn.focus();
+            } else if (data.next_question) {
+                addMessage(data.next_question, 'bot');
+                toggleInput(false);
+                userInput.focus();
+            } else {
+                addMessage('The interview has concluded. Click below to see your final score.', 'bot', 'status-message');
+                endBtn.focus();
+            }
+        } catch (error) {
+            removeTypingIndicator();
+            addMessage('An error occurred. ' + error.message, 'bot', 'error-message');
+            toggleInput(false);
+        }
+    }
+
+    async function endInterview() {
+        if (!currentInterviewId) return;
+        toggleInput(true);
+        addMessage("Calculating final score...", 'bot', 'status-message');
+
+        try {
+            const data = await apiFetch('/api/interview/end', {
+                method: 'POST',
+                body: JSON.stringify({ interview_id: currentInterviewId })
+            });
+            
+            if (data.final_summary && data.all_topic_scores) {
+                displayResults(data);
+            } else {
+                addMessage('Could not retrieve final score.', 'bot', 'error-message');
+            }
+        } catch (error) {
+            addMessage('Error ending interview. ' + error.message, 'bot', 'error-message');
+        } finally {
+            currentInterviewId = null;
+        }
+    }
+
+    function displayResults(data) {
+        interviewContainer.classList.add('hidden');
+        resultsContainer.classList.remove('hidden');
+
+        finalSummaryCard.innerHTML = `<h3 class="text-2xl font-bold">${data.final_summary}</h3>`;
+        
+        topicResultsContainer.innerHTML = '';
+        data.all_topic_scores.forEach(topic => {
+            const topicCard = document.createElement('div');
+            topicCard.className = 'p-4 bg-gray-50 border border-gray-200 rounded-lg shadow-sm';
+            topicCard.innerHTML = `
+                <div class="flex justify-between items-center">
+                    <h4 class="text-xl font-semibold text-gray-700">${topic.topic}</h4>
+                    <span class="text-lg font-bold ${topic.final_score >= 7 ? 'text-green-600' : 'text-red-500'}">${topic.final_score} / 10</span>
+                </div>
+                <p class="mt-2 text-gray-600">${topic.summary}</p>
+            `;
+            topicResultsContainer.appendChild(topicCard);
+        });
+    }
+
+    function showDashboard() {
+        interviewContainer.classList.add('hidden');
+        resultsContainer.classList.add('hidden');
+        dashboardContainer.classList.remove('hidden');
+        // Reload dashboard content to get fresh data
+        if (currentUser.role === 'manager') {
+            loadManagerDashboard();
+        } else {
+            loadAssociateDashboard();
+        }
+    }
+
+    // --- Event Listeners ---
+    logoutBtn.addEventListener('click', logout);
+    sendBtn.addEventListener('click', sendMessage);
+    endBtn.addEventListener('click', endInterview);
+    userInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !sendBtn.disabled) sendMessage();
+    });
+    backToDashboardBtn.addEventListener('click', showDashboard);
+
+</script>
+</body>
+</html>
