@@ -16,3 +16,5 @@ lxml
 openai
 nest-asyncio
 langgraph
+jinja2
+python-multipart
