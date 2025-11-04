@@ -54,6 +54,7 @@ def init_db():
         topic TEXT NOT NULL,
         question TEXT NOT NULL,
         expected_answer TEXT NOT NULL,
+        question_type TEXT NOT NULL DEFAULT 'main', -- ADDED: 'main', 'followup_1', 'followup_2'
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (interview_id) REFERENCES interviews (id)
     )
@@ -63,13 +64,15 @@ def init_db():
     CREATE TABLE IF NOT EXISTS answers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         interview_id TEXT NOT NULL,
+        question_id INTEGER NOT NULL, -- ADDED: Foreign key to link answer to question
         topic TEXT NOT NULL,
         user_answer TEXT NOT NULL,
         feedback TEXT NOT NULL,
         score INTEGER NOT NULL,
         status TEXT NOT NULL,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (interview_id) REFERENCES interviews (id)
+        FOREIGN KEY (interview_id) REFERENCES interviews (id),
+        FOREIGN KEY (question_id) REFERENCES questions (id) -- ADDED: Constraint
     )
     """)
     
@@ -189,49 +192,61 @@ def update_interview_on_finish(interview_id: str, total_score: int, max_score: i
 
 # --- LangGraph Data Logging Functions ---
 
-def add_question(session_id: str, topic: str, question: str, expected_answer: str):
+def add_question(session_id: str, topic: str, question: str, expected_answer: str, question_type: str) -> int:
+    """Adds a question to the DB and returns its new ID."""
     conn = get_db_connection()
-    conn.execute(
-        "INSERT INTO questions (interview_id, topic, question, expected_answer) VALUES (?, ?, ?, ?)",
-        (session_id, topic, question, expected_answer)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO questions (interview_id, topic, question, expected_answer, question_type) VALUES (?, ?, ?, ?, ?)",
+        (session_id, topic, question, expected_answer, question_type)
     )
     conn.commit()
+    new_id = cursor.lastrowid
     conn.close()
+    return new_id
 
-def add_answer_and_evaluation(session_id: str, topic: str, user_answer: str, feedback: str, score: int, status: str):
+def add_answer_and_evaluation(session_id: str, question_id: int, topic: str, user_answer: str, feedback: str, score: int, status: str):
+    """Adds an answer, linking it to a specific question."""
     conn = get_db_connection()
     conn.execute(
-        "INSERT INTO answers (interview_id, topic, user_answer, feedback, score, status) VALUES (?, ?, ?, ?, ?, ?)",
-        (session_id, topic, user_answer, feedback, score, status)
+        "INSERT INTO answers (interview_id, question_id, topic, user_answer, feedback, score, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (session_id, question_id, topic, user_answer, feedback, score, status)
     )
     conn.commit()
     conn.close()
 
 def get_topic_history_as_string(session_id: str, topic: str) -> str:
+    """Reconstructs the transcript for a given topic."""
     conn = get_db_connection()
-    questions = conn.execute(
-        "SELECT question, expected_answer FROM questions WHERE interview_id = ? AND topic = ? ORDER BY timestamp",
-        (session_id, topic)
-    ).fetchall()
-    answers = conn.execute(
-        "SELECT user_answer, feedback, score, status FROM answers WHERE interview_id = ? AND topic = ? ORDER BY timestamp",
-        (session_id, topic)
-    ).fetchall()
+    # This query now joins questions and answers to ensure correct order and association
+    query_results = conn.execute("""
+        SELECT 
+            q.question, 
+            q.expected_answer,
+            a.user_answer, 
+            a.feedback, 
+            a.score, 
+            a.status
+        FROM questions q
+        LEFT JOIN answers a ON q.id = a.question_id
+        WHERE q.interview_id = ? AND q.topic = ?
+        ORDER BY q.timestamp
+    """, (session_id, topic)).fetchall()
+    
     conn.close()
 
     transcript = []
-    for i in range(len(questions)):
-        q = questions[i]
-        transcript.append(f"AI_QUESTION: {q['question']}")
-        if i < len(answers):
-            a = answers[i]
-            transcript.append(f"USER_ANSWER: {a['user_answer']}")
-            transcript.append(f"AI_FEEDBACK: {a['feedback']} (Score: {a['score']}/10, Status: {a['status']})")
+    for row in query_results:
+        transcript.append(f"AI_QUESTION: {row['question']}")
+        if row['user_answer']:
+            transcript.append(f"USER_ANSWER: {row['user_answer']}")
+            transcript.append(f"AI_FEEDBACK: {row['feedback']} (Score: {row['score']}/10, Status: {row['status']})")
     
     return "\n".join(transcript)
 
 def get_scores_for_topic(session_id: str, topic: str) -> List[int]:
     conn = get_db_connection()
+    # Scores are now retrieved from the answers table
     scores = conn.execute(
         "SELECT score FROM answers WHERE interview_id = ? AND topic = ? ORDER BY timestamp",
         (session_id, topic)
@@ -254,5 +269,20 @@ def get_all_topic_results_for_session(session_id: str) -> List[Dict[str, Any]]:
         "SELECT topic, score AS final_score, summary FROM topic_results WHERE interview_id = ?",
         (session_id,)
     ).fetchall()
+    conn.close()
+    return [dict(r) for r in results]
+
+def get_full_interview_transcript(interview_id: str) -> List[Dict[str, Any]]:
+    """Gets the full, ordered transcript for a manager to review."""
+    conn = get_db_connection()
+    results = conn.execute("""
+        SELECT 
+            q.topic, q.question, q.question_type, q.expected_answer,
+            a.user_answer, a.feedback, a.score
+        FROM questions q
+        LEFT JOIN answers a ON q.id = a.question_id
+        WHERE q.interview_id = ?
+        ORDER BY q.timestamp
+    """, (interview_id,)).fetchall()
     conn.close()
     return [dict(r) for r in results]

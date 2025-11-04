@@ -25,6 +25,11 @@
         .typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
         .typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
         @keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1.0); } }
+
+        /* Styles for new Transcript Modal */
+        #transcript-content::-webkit-scrollbar { width: 6px; }
+        #transcript-content::-webkit-scrollbar-track { background: #f1f5f9; }
+        #transcript-content::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
     </style>
 </head>
 <body class="h-full flex items-center justify-center font-sans bg-gradient-to-br from-gray-50 to-gray-200">
@@ -38,7 +43,8 @@
             </div>
         </div>
         <div id="dashboard-content" class="flex-1 p-4 overflow-y-auto bg-gray-50 rounded-lg my-4">
-            </div>
+            <!-- Content loaded by JS -->
+        </div>
     </div>
 
     <div id="interview-container" class="w-full max-w-2xl h-[90vh] bg-white rounded-2xl shadow-2xl flex flex-col p-4 md:p-6 hidden">
@@ -46,7 +52,8 @@
             <h2 class="text-2xl font-bold text-gray-800">AI On-Call Review</h2>
         </div>
         <div id="chat-box" class="chat-box flex-1 p-4 overflow-y-auto flex flex-col gap-4 my-4 bg-gray-50 rounded-lg" style="scroll-behavior: smooth;">
-            </div>
+            <!-- Chat messages loaded by JS -->
+        </div>
         <div class="input-container flex gap-3">
             <input type="text" id="user-input" placeholder="Type your answer..." class="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition disabled:bg-gray-200" disabled>
             <button id="send-btn" class="px-6 py-3 bg-blue-500 text-white font-semibold rounded-lg shadow-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition disabled:bg-blue-300 disabled:cursor-not-allowed" disabled>Send</button>
@@ -61,11 +68,26 @@
             <h2 class="text-3xl font-bold text-gray-800">Interview Results</h2>
         </div>
         <div id="final-summary-card" class="my-6 p-6 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl text-center shadow-lg">
-            </div>
+            <!-- Final score loaded by JS -->
+        </div>
         <div id="topic-results-container" class="space-y-4">
-            </div>
+            <!-- Topic scores loaded by JS -->
+        </div>
         <div class="text-center pt-6 mt-6 border-t border-gray-200">
              <button id="back-to-dashboard-btn" class="w-full md:w-auto px-8 py-3 bg-blue-500 text-white font-bold rounded-lg shadow-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition">Back to Dashboard</button>
+        </div>
+    </div>
+
+    <!-- NEW: Transcript Modal -->
+    <div id="transcript-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center hidden z-50">
+        <div class="relative p-6 md:p-8 bg-white w-full max-w-3xl h-[85vh] rounded-2xl shadow-xl flex flex-col">
+            <div class="flex justify-between items-center pb-4 border-b">
+                <h3 class="text-2xl font-bold text-gray-800">Interview Transcript</h3>
+                <button onclick="closeTranscriptModal()" class="text-gray-500 hover:text-gray-800 text-3xl">&times;</button>
+            </div>
+            <div id="transcript-content" class="overflow-y-auto flex-1 mt-4 pr-2">
+                <!-- Transcript content loaded by JS -->
+            </div>
         </div>
     </div>
 
@@ -166,6 +188,7 @@
                                     <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                                     <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Score</th>
                                     <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Scheduled On</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Transcript</th>
                                 </tr>
                             </thead>
                             <tbody id="results-table-body" class="bg-white divide-y divide-gray-200"></tbody>
@@ -186,9 +209,18 @@
             resultsTable.innerHTML += `
                 <tr>
                     <td class="px-4 py-2 whitespace-nowrap">${r.associate_username}</td>
-                    <td class="px-4 py-2 whitespace-nowrap">${r.status}</td>
+                    <td class="px-4 py-2 whitespace-nowrap">
+                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                            r.status === 'completed' ? 'bg-green-100 text-green-800' :
+                            r.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-gray-100 text-gray-800'
+                        }">${r.status}</span>
+                    </td>
                     <td class="px-4 py-2 whitespace-nowrap">${r.final_score !== null ? `${r.final_score} / ${r.max_score}` : 'N/A'}</td>
                     <td class="px-4 py-2 whitespace-nowrap">${new Date(r.created_at).toLocaleDateString()}</td>
+                    <td class="px-4 py-2 whitespace-nowrap">
+                        ${r.status === 'completed' ? `<button onclick="showInterviewTranscript('${r.id}')" class="px-3 py-1 bg-blue-100 text-blue-700 text-sm font-semibold rounded-md hover:bg-blue-200 transition">View</button>` : 'N/A'}
+                    </td>
                 </tr>`;
         });
 
@@ -200,6 +232,24 @@
         const data = await apiFetch('/api/associate/dashboard');
         dashboardContent.innerHTML = `
             <div class="space-y-6">
+                <!-- NEW: Practice Review Section -->
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <h3 class="text-xl font-semibold mb-4 text-gray-800">Practice Review</h3>
+                    <p class="text-gray-600 mb-4">Start an instant review for yourself. This will be saved to your "Completed Reviews" list.</p>
+                    <form id="practice-form" class="space-y-4">
+                         <div>
+                            <label class="block text-sm font-medium text-gray-700">Select Topics (at least one):</label>
+                            <div class="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
+                                <label class="flex items-center p-2 bg-gray-50 rounded-md border hover:bg-gray-100 cursor-pointer"><input type="checkbox" name="topics" value="Incident Management" class="mr-2" checked> Incident Management</label>
+                                <label class="flex items-center p-2 bg-gray-50 rounded-md border hover:bg-gray-100 cursor-pointer"><input type="checkbox" name="topics" value="Problem Management" class="mr-2" checked> Problem Management</label>
+                                <label class="flex items-center p-2 bg-gray-50 rounded-md border hover:bg-gray-100 cursor-pointer"><input type="checkbox" name="topics" value="Change Management" class="mr-2" checked> Change Management</label>
+                            </div>
+                        </div>
+                        <button type="submit" id="start-practice-btn" class="w-full px-4 py-2 bg-green-500 text-white font-semibold rounded-lg shadow hover:bg-green-600 transition">Start Practice</button>
+                    </form>
+                </div>
+
+                <!-- Existing Sections -->
                 <div class="bg-white p-6 rounded-lg shadow">
                     <h3 class="text-xl font-semibold mb-4 text-gray-800">Pending Reviews</h3>
                     <div id="pending-interviews" class="space-y-3">
@@ -222,7 +272,7 @@
                         <p class="font-medium">${JSON.parse(p.topics).join(', ')}</p>
                         <p class="text-sm text-gray-500">Scheduled: ${new Date(p.created_at).toLocaleString()}</p>
                     </div>
-                    <button onclick="startInterview('${p.id}')" class="px-4 py-2 bg-green-500 text-white font-semibold rounded-lg shadow hover:bg-green-600 transition">Start</button>
+                    <button onclick="startInterview('${p.id}')" class="px-4 py-2 bg-blue-500 text-white font-semibold rounded-lg shadow hover:bg-blue-600 transition">Start</button>
                 </div>`;
         });
         
@@ -237,6 +287,9 @@
                     <span class="text-lg font-bold ${c.final_score >= (c.max_score * 0.7) ? 'text-green-600' : 'text-red-500'}">${c.final_score} / ${c.max_score}</span>
                 </div>`;
         });
+
+        // NEW: Add listener for practice form
+        document.getElementById('practice-form').addEventListener('submit', handleStartPractice);
     }
 
     async function scheduleInterview(e) {
@@ -246,6 +299,15 @@
         const topics = Array.from(formData.getAll('topics'));
         const associate_id = formData.get('associate_id');
         
+        if (!associate_id) {
+            alert('Please select an associate.');
+            return;
+        }
+        if (topics.length === 0) {
+            alert('Please select at least one topic.');
+            return;
+        }
+
         try {
             await apiFetch('/api/manager/schedule', {
                 method: 'POST',
@@ -327,6 +389,55 @@
         } catch (error) {
             addMessage('Failed to connect. ' + error.message, 'bot', 'error-message');
             setTimeout(showDashboard, 2000);
+        }
+    }
+
+    // NEW: Handler for the practice button
+    async function handleStartPractice(e) {
+        e.preventDefault();
+        const form = e.target;
+        const formData = new FormData(form);
+        const topics = Array.from(formData.getAll('topics'));
+
+        if (topics.length === 0) {
+            alert('Please select at least one topic to practice.');
+            return;
+        }
+
+        const startBtn = document.getElementById('start-practice-btn');
+        startBtn.disabled = true;
+        startBtn.textContent = 'Starting...';
+
+        try {
+            // Call the new practice endpoint
+            const data = await apiFetch('/api/associate/start_practice', {
+                method: 'POST',
+                body: JSON.stringify({ topics: topics })
+            });
+
+            if (data.session_id && data.question) {
+                currentInterviewId = data.session_id;
+
+                // Switch views
+                dashboardContainer.classList.add('hidden');
+                resultsContainer.classList.add('hidden');
+                interviewContainer.classList.remove('hidden');
+                
+                // Init chat
+                chatBox.innerHTML = '';
+                addMessage("Practice session started. Good luck!", 'bot', 'status-message');
+                addMessage(data.question, 'bot');
+                toggleInput(false);
+                userInput.focus();
+            } else {
+                addMessage('Error starting practice. Please try again.', 'bot', 'error-message');
+                showDashboard();
+            }
+        } catch (error) {
+            alert('Failed to start practice: ' + error.message);
+        } finally {
+            startBtn.disabled = false;
+            startBtn.textContent = 'Start Practice';
         }
     }
 
@@ -430,6 +541,56 @@
             loadAssociateDashboard();
         }
     }
+
+    // --- NEW: Transcript Modal Functions ---
+    function closeTranscriptModal() {
+        document.getElementById('transcript-modal').classList.add('hidden');
+    }
+
+    async function showInterviewTranscript(interviewId) {
+        const modal = document.getElementById('transcript-modal');
+        const content = document.getElementById('transcript-content');
+        content.innerHTML = '<p class="text-center text-gray-500">Loading transcript...</p>';
+        modal.classList.remove('hidden');
+
+        try {
+            const transcript = await apiFetch(`/api/manager/interview_transcript/${interviewId}`);
+            let html = '';
+            let currentTopic = '';
+            
+            transcript.forEach(item => {
+                if (item.topic !== currentTopic) {
+                    currentTopic = item.topic;
+                    html += `<h4 class="text-xl font-semibold mt-6 mb-3 p-2 bg-gray-100 rounded-lg sticky top-0">${currentTopic}</h4>`;
+                }
+                
+                // Sanitize text to prevent HTML injection
+                const escapeHTML = (str) => str ? str.replace(/</g, "&lt;").replace(/>/g, "&gt;") : '';
+
+                html += `
+                    <div class="my-3 p-4 border rounded-lg shadow-sm">
+                        <p class="font-bold text-gray-800">
+                            <span class="text-blue-600">(${item.question_type})</span> AI Question:
+                        </p>
+                        <p class="ml-4 mt-1 text-gray-700">${escapeHTML(item.question)}</p>
+                        
+                        <p class="font-bold text-gray-800 mt-3">User Answer:</p>
+                        <p class="ml-4 mt-1 ${!item.user_answer ? 'text-gray-400 italic' : 'text-gray-700'}">${escapeHTML(item.user_answer) || 'No answer provided'}</p>
+                        
+                        <div class="mt-3 p-3 bg-blue-50 border-l-4 border-blue-300 rounded-md">
+                            <p class="font-semibold text-blue-800">AI Feedback:</p>
+                            <p class="ml-4 mt-1 ${!item.feedback ? 'text-gray-400 italic' : 'text-blue-700'}">${escapeHTML(item.feedback) || 'N/A'}</p>
+                            <p class="font-semibold text-blue-800 mt-2">Score: <span class="font-normal text-blue-700">${item.score !== null ? item.score : 'N/A'} / 10</span></p>
+                        </div>
+                    </div>
+                `;
+            });
+            content.innerHTML = html;
+        } catch (error) {
+            content.innerHTML = `<p class="text-red-500 p-4">Error loading transcript: ${error.message}</p>`;
+        }
+    }
+
 
     // --- Event Listeners ---
     logoutBtn.addEventListener('click', logout);
