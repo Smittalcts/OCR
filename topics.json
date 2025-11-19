@@ -1,0 +1,68 @@
+{
+    "Incident Management": {
+      "sub_topics": [
+        "Incident lifecycle",
+        "Priorities / it's resolution and acceptance timing",
+        "Role of Technical Incident Lead",
+        "ITASK process",
+        "Three strike rules",
+        "Role of GFS (Global Frontline Support)",
+        "Inbound & outbound team workgroups/contacts",
+        "NSI P2",
+        "On Hold incident status",
+        "KB article attachment process",
+        "SLA exception process"
+      ],
+      "sample_questions": [
+        "Is the Associate aware of end to end incident process flow?",
+        "Is the Associate aware of the priorities, SLA, OLA?",
+        "How do we engage the GFS team to raise a P1 / P2?",
+        "What are the justifications you provide for raising a P1/P2?",
+        "What is the role of Technical Incident Lead?",
+        "Is the Associate aware of the ITASK process?",
+        "Is the associate aware of Three strike rules?",
+        "What is the role of GFS(Global Frontline Support)?",
+        "Is the team aware of the workgroups and contacts for the inbound & outbound teams?",
+        "Is the associate aware on the NSI P2?",
+        "When can an incident be placed On Hold?",
+        "Is the associate aware of the KB article and how to attach the same while closing the know issue incident?",
+        "Is the associate aware of the Exception process for the SLA failed tickets?"
+      ]
+    },
+    "Problem Management": {
+      "sub_topics": [
+        "Problem lifecycle",
+        "Root Cause Analysis (RCA)",
+        "Known Errors"
+      ],
+      "sample_questions": [
+        "What is the difference between an Incident and a Problem?",
+        "Can you walk me through the Problem Management lifecycle?",
+        "What is a Known Error and how is it related to the KEDB?"
+      ]
+    },
+    "Change Management": {
+      "sub_topics": [
+        "Change types (Standard, Normal, Emergency)",
+        "Change Advisory Board (CAB)",
+        "Change implementation process"
+      ],
+      "sample_questions": [
+        "What are the three main types of changes?",
+        "What is the role of the CAB?",
+        "When would you raise an Emergency Change?"
+      ]
+    },
+    "Knowledge Management": {
+      "sub_topics": [
+        "KEDB (Known Error Database)",
+        "Creating and maintaining KB articles",
+        "Knowledge sharing culture"
+      ],
+      "sample_questions": [
+        "What is the purpose of the Knowledge Management process?",
+        "What makes a good KB article?",
+        "How does Knowledge Management help in resolving incidents faster?"
+      ]
+    }
+  }

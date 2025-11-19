@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>On-Call Interview Tester</title>
+<!-- Load Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+/* Use Inter font */
+body {
+font-family: "Inter", sans-serif;
+}
+/* Custom scrollbar for chat */
+#chatWindow::-webkit-scrollbar {
+width: 6px;
+}
+#chatWindow::-webkit-scrollbar-track {
+background: #f1f5f9;
+}
+#chatWindow::-webkit-scrollbar-thumb {
+background: #94a3b8;
+border-radius: 3px;
+}
+#chatWindow::-webkit-scrollbar-thumb:hover {
+background: #64748b;
+}
+/* Spinner animation */
+@keyframes spin {
+to {
+transform: rotate(360deg);
+}
+}
+.spinner {
+border: 4px solid rgba(255, 255, 255, 0.3);
+border-top-color: #fff;
+border-radius: 50%;
+width: 1.25rem;
+height: 1.25rem;
+animation: spin 1s linear infinite;
+}
+.spinner-dark {
+border-top-color: #334155;
+}
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+
+<div class="bg-white w-full max-w-4xl rounded-xl shadow-2xl flex flex-col md:flex-row overflow-hidden" style="height: 80vh;">
+    
+    <!-- Left Column: Settings & Summary -->
+    <div class="w-full md:w-1/3 bg-gray-50 p-6 border-b md:border-b-0 md:border-r border-gray-200 flex flex-col">
+        <h2 class="text-2xl font-bold text-gray-800 mb-4">Interview Setup</h2>
+        
+        <!-- Topics Input -->
+        <div class="mb-4">
+            <label for="topicsInput" class="block text-sm font-medium text-gray-700 mb-1">Interview Topics</label>
+            <!-- Input is now disabled, as topics are loaded from topics.json -->
+            <input type="text" id="topicsInput" class="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-100" placeholder="Topics loaded from server" disabled>
+            <p class="text-xs text-gray-500 mt-1">Topics are now managed in `topics.json` on the server.</p>
+        </div>
+        
+        <!-- Start Button -->
+        <button id="startButton" class="w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed">
+            <span id="startButtonText">Start Interview</span>
+            <div id="startSpinner" class="spinner hidden ml-2"></div>
+        </button>
+        
+        <!-- Final Summary -->
+        <div id="summaryContainer" class="mt-6 pt-6 border-t border-gray-200 hidden flex-1 flex-col">
+            <h3 class="text-lg font-semibold text-gray-800 mb-2">Interview Summary</h3>
+            <div class="bg-gray-100 rounded-lg p-4 text-sm text-gray-700 overflow-auto">
+                <!-- Use pre-wrap to respect newlines in the JSON string -->
+                <pre id="summaryContent" class="whitespace-pre-wrap break-all"></pre>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Right Column: Chat Interface -->
+    <div class="w-full md:w-2/3 flex flex-col bg-white">
+        <!-- Chat Window -->
+        <div id="chatWindow" class="flex-1 p-6 space-y-4 overflow-y-auto">
+            <!-- Initial Message -->
+            <div class="flex justify-center">
+                <div class="bg-gray-200 text-gray-700 text-sm py-2 px-4 rounded-full">
+                    Please click "Start Interview" to begin.
+                </div>
+            </div>
+            <!-- Chat messages will be appended here -->
+        </div>
+        
+        <!-- Error Display -->
+        <div id="errorDisplay" class="px-6 py-2 text-red-600 text-sm hidden"></div>
+        
+        <!-- Message Input -->
+        <div class="p-6 border-t border-gray-200 bg-gray-50">
+            <div class="flex space-x-3">
+                <input type="text" id="messageInput" class="flex-1 px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100" placeholder="Type your answer..." disabled>
+                <button id="sendButton" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                    <span id="sendButtonText">Send</span>
+                    <div id="sendSpinner" class="spinner hidden ml-2"></div>
+                </button>
+            </div>
+        </div>
+    </div>
+    
+</div>
+
+<script>
+    // --- DOM Elements ---
+    const topicsInput = document.getElementById('topicsInput');
+    const startButton = document.getElementById('startButton');
+    const startButtonText = document.getElementById('startButtonText');
+    const startSpinner = document.getElementById('startSpinner');
+    
+    const chatWindow = document.getElementById('chatWindow');
+    const messageInput = document.getElementById('messageInput');
+    const sendButton = document.getElementById('sendButton');
+    const sendButtonText = document.getElementById('sendButtonText');
+    const sendSpinner = document.getElementById('sendSpinner');
+    
+    const errorDisplay = document.getElementById('errorDisplay');
+    const summaryContainer = document.getElementById('summaryContainer');
+    const summaryContent = document.getElementById('summaryContent');
+    
+    // --- State ---
+    let candidateId = null;
+    let isInterviewActive = false;
+    
+    // --- API URLs ---
+    // Use relative paths so it works when served by FastAPI
+    const API_BASE_URL = ''; 
+    const START_URL = `/interview/start`;
+    const NEXT_URL = `/interview/next`;
+    const STATE_URL = (id) => `/interview/state/${id}`;
+
+    // --- Event Listeners ---
+    startButton.addEventListener('click', startInterview);
+    sendButton.addEventListener('click', sendAnswer);
+    messageInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !sendButton.disabled) {
+            sendAnswer();
+        }
+    });
+
+    /**
+     * Clears the chat and adds a message.
+     * @param {string} sender - 'human', 'agent', 'system', or 'error'
+     * @param {string} text - The message content
+     */
+    function addMessage(sender, text) {
+        if (!text || text.trim().length === 0) {
+            return;
+        }
+
+        const messageEl = document.createElement('div');
+        messageEl.className = 'flex';
+        
+        let bubbleClasses = 'py-2 px-4 rounded-lg max-w-xs md:max-w-md lg:max-w-lg break-words';
+        
+        if (sender === 'human') {
+            messageEl.classList.add('justify-end');
+            bubbleClasses += ' bg-blue-600 text-white shadow';
+        } else if (sender === 'agent') {
+            messageEl.classList.add('justify-start');
+            bubbleClasses += ' bg-gray-200 text-gray-800 shadow-sm';
+        } else if (sender === 'system' || sender === 'error') {
+            messageEl.classList.add('justify-center');
+            bubbleClasses += (sender === 'error') 
+                ? ' bg-red-100 text-red-700' 
+                : ' bg-yellow-100 text-yellow-800';
+            bubbleClasses += ' text-sm font-medium';
+        }
+        
+        messageEl.innerHTML = `<div class="${bubbleClasses}">${text}</div>`;
+        chatWindow.appendChild(messageEl);
+        
+        // Scroll to bottom
+        chatWindow.scrollTop = chatWindow.scrollHeight;
+    }
+
+    /**
+     * Shows or hides an error message below the chat input.
+     * @param {string|null} message - The error text or null to hide.
+     */
+    function showFormError(message) {
+        if (message) {
+            errorDisplay.textContent = message;
+            errorDisplay.classList.remove('hidden');
+        } else {
+            errorDisplay.classList.add('hidden');
+        }
+    }
+    
+    /**
+     * Clears the initial "Start Interview" message.
+     */
+    function clearInitialMessage() {
+        const initialMessage = chatWindow.querySelector('.justify-center');
+        if (initialMessage && initialMessage.textContent.includes('start the interview')) {
+            chatWindow.innerHTML = '';
+        }
+    }
+    
+    /**
+     * Handles starting the interview.
+     */
+    async function startInterview() {
+        showFormError(null);
+        clearInitialMessage();
+        
+        // Set loading state
+        startButton.disabled = true;
+        startButtonText.textContent = 'Starting...';
+        startSpinner.classList.remove('hidden');
+        
+        // Topics are now sent from the server, so we send an empty POST
+        try {
+            const response = await fetch(START_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}) 
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(`Server error: ${response.statusText}. Detail: ${errorData.detail}`);
+            }
+            
+            const data = await response.json();
+            
+            // Success
+            candidateId = data.candidate_id;
+            isInterviewActive = true;
+            addMessage('agent', data.agent_message);
+            
+            // Update UI state
+            topicsInput.disabled = true;
+            messageInput.disabled = false;
+            sendButton.disabled = false;
+            messageInput.focus();
+            
+        } catch (error) {
+            console.error('Start Interview Error:', error);
+            addMessage('error', `Failed to start interview. ${error.message}`);
+            startButton.disabled = false;
+            startButtonText.textContent = 'Start Interview';
+        } finally {
+            startSpinner.classList.add('hidden');
+        }
+    }
+    
+    /**
+     * Handles sending a candidate's answer.
+     */
+    async function sendAnswer() {
+        const answer = messageInput.value.trim();
+        if (!answer || !isInterviewActive) {
+            return;
+        }
+        
+        showFormError(null);
+        addMessage('human', answer);
+        messageInput.value = '';
+        
+        // Set loading state
+        sendButton.disabled = true;
+        messageInput.disabled = true;
+        sendButtonText.textContent = '';
+        sendSpinner.classList.remove('hidden');
+        
+        let data = null; 
+        
+        try {
+            const response = await fetch(NEXT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    candidate_id: candidateId,
+                    answer: answer
+                })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(`Server error: ${response.statusText}. Detail: ${errorData.detail}`);
+            }
+            
+            data = await response.json();
+            addMessage('agent', data.agent_message);
+            
+            if (data.is_interview_over) {
+                endInterview();
+            }
+            
+        } catch (error) {
+            console.error('Send Answer Error:', error);
+            addMessage('error', `Failed to send message. ${error.message}`);
+        } finally {
+            // Remove loading state, unless interview is over
+            if (!data || !data.is_interview_over) {
+                sendButton.disabled = false;
+                messageInput.disabled = false;
+                sendButtonText.textContent = 'Send';
+                sendSpinner.classList.add('hidden');
+                messageInput.focus();
+            }
+        }
+    }
+    
+    /**
+     * Fetches and displays the final summary.
+     */
+    async function endInterview() {
+        isInterviewActive = false;
+        
+        // Disable chat input permanently
+        messageInput.disabled = true;
+        sendButton.disabled = true;
+        sendButtonText.textContent = 'Done';
+        sendSpinner.classList.add('hidden');
+        messageInput.placeholder = 'Interview has concluded.';
+        
+        addMessage('system', 'Interview has concluded. Fetching summary...');
+        
+        try {
+            const response = await fetch(STATE_URL(candidateId));
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(`Server error: ${response.statusText}. Detail: ${errorData.detail}`);
+            }
+            
+            const state = await response.json();
+
+            if (state.final_summary) {
+                // Display the JSON summary nicely formatted
+                summaryContent.textContent = JSON.stringify(state.final_summary, null, 2);
+                summaryContainer.classList.remove('hidden');
+            } else {
+                addMessage('error', 'Could not retrieve final summary.');
+            }
+            
+        } catch (error) {
+            console.error('Fetch Summary Error:', error);
+            addMessage('error', `Failed to fetch summary. ${error.message}`);
+        }
+    }
+</script>
+</body>
+</html>
