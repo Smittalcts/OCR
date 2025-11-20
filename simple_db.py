@@ -6,18 +6,23 @@ from typing import List, Dict, Any
 DB_NAME = "interview_transcripts.db"
 
 def init_db():
-    """Initialize the simple text-based database."""
+    """Initialize the specialized interview database tables."""
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     
-    # Table for individual chat messages/turns
+    # Table for individual interview turns
     c.execute('''
-        CREATE TABLE IF NOT EXISTS transcripts (
+        CREATE TABLE IF NOT EXISTS interview_turns (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT,
+            session_id TEXT NOT NULL,
             timestamp TEXT,
-            role TEXT,
-            content TEXT,
+            topic TEXT,
+            sub_topic TEXT,
+            question TEXT,
+            expected_answer TEXT,
+            user_answer TEXT,
+            score INTEGER,
+            evaluation_feedback TEXT,
             metadata TEXT
         )
     ''')
@@ -31,12 +36,14 @@ def init_db():
             created_at TEXT
         )
     ''')
-    
     conn.commit()
     conn.close()
 
-def log_message(session_id: str, role: str, content: str, metadata: Dict[str, Any] = None):
-    """Logs a message to the DB in plain text."""
+def log_turn_data(
+    session_id: str, topic: str, sub_topic: str, question: str, 
+    expected_answer: str, user_answer: str, score: int, 
+    evaluation_feedback: str, metadata: Dict[str, Any] = None
+):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     timestamp = datetime.now().isoformat()
@@ -44,12 +51,18 @@ def log_message(session_id: str, role: str, content: str, metadata: Dict[str, An
     
     try:
         c.execute(
-            "INSERT INTO transcripts (session_id, timestamp, role, content, metadata) VALUES (?, ?, ?, ?, ?)",
-            (session_id, timestamp, role, content, meta_str)
+            """
+            INSERT INTO interview_turns (
+                session_id, timestamp, topic, sub_topic, question, 
+                expected_answer, user_answer, score, evaluation_feedback, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (session_id, timestamp, topic, sub_topic, question, 
+             expected_answer, user_answer, score, evaluation_feedback, meta_str)
         )
         conn.commit()
     except Exception as e:
-        print(f"DB Error: {e}")
+        print(f"DB Log Error: {e}")
     finally:
         conn.close()
 
@@ -64,15 +77,26 @@ def save_summary(session_id: str, rating: str, text: str):
         )
         conn.commit()
     except Exception as e:
-        print(f"DB Error: {e}")
+        print(f"DB Summary Error: {e}")
     finally:
         conn.close()
 
-def get_transcript(session_id: str) -> List[Dict]:
+def get_turn_data(session_id: str) -> List[Dict]:
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
-    c.execute("SELECT * FROM transcripts WHERE session_id = ? ORDER BY id ASC", (session_id,))
+    c.execute("SELECT * FROM interview_turns WHERE session_id = ? ORDER BY id ASC", (session_id,))
     rows = c.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    
+    results = []
+    for row in rows:
+        data = dict(row)
+        # Safely parse metadata
+        if data.get('metadata'):
+            try:
+                data['metadata'] = json.loads(data['metadata'])
+            except:
+                pass
+        results.append(data)
+    return results

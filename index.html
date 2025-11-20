@@ -1,350 +1,430 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>On-Call Interview Tester</title>
-<!-- Load Tailwind CSS -->
-<script src="https://cdn.tailwindcss.com"></script>
-<style>
-/* Use Inter font */
-body {
-font-family: "Inter", sans-serif;
-}
-/* Custom scrollbar for chat */
-#chatWindow::-webkit-scrollbar {
-width: 6px;
-}
-#chatWindow::-webkit-scrollbar-track {
-background: #f1f5f9;
-}
-#chatWindow::-webkit-scrollbar-thumb {
-background: #94a3b8;
-border-radius: 3px;
-}
-#chatWindow::-webkit-scrollbar-thumb:hover {
-background: #64748b;
-}
-/* Spinner animation */
-@keyframes spin {
-to {
-transform: rotate(360deg);
-}
-}
-.spinner {
-border: 4px solid rgba(255, 255, 255, 0.3);
-border-top-color: #fff;
-border-radius: 50%;
-width: 1.25rem;
-height: 1.25rem;
-animation: spin 1s linear infinite;
-}
-.spinner-dark {
-border-top-color: #334155;
-}
-</style>
-</head>
-<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI SRE Interviewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        
+        /* Hide Scrollbar but allow scroll */
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        .message-appear {
+            animation: slideUp 0.3s ease-out forwards;
+        }
+        
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
 
-<div class="bg-white w-full max-w-4xl rounded-xl shadow-2xl flex flex-col md:flex-row overflow-hidden" style="height: 80vh;">
-    
-    <!-- Left Column: Settings & Summary -->
-    <div class="w-full md:w-1/3 bg-gray-50 p-6 border-b md:border-b-0 md:border-r border-gray-200 flex flex-col">
-        <h2 class="text-2xl font-bold text-gray-800 mb-4">Interview Setup</h2>
+        .typing-dot {
+            animation: typing 1.4s infinite ease-in-out both;
+        }
+        .typing-dot:nth-child(1) { animation-delay: -0.32s; }
+        .typing-dot:nth-child(2) { animation-delay: -0.16s; }
         
-        <!-- Topics Input -->
-        <div class="mb-4">
-            <label for="topicsInput" class="block text-sm font-medium text-gray-700 mb-1">Interview Topics</label>
-            <!-- Input is now disabled, as topics are loaded from topics.json -->
-            <input type="text" id="topicsInput" class="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-100" placeholder="Topics loaded from server" disabled>
-            <p class="text-xs text-gray-500 mt-1">Topics are now managed in `topics.json` on the server.</p>
-        </div>
+        @keyframes typing {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body class="bg-white h-screen flex items-center justify-center text-slate-800 overflow-hidden">
+
+    <!-- Main Application Container -->
+    <div class="w-full h-full max-w-7xl bg-white flex flex-col md:flex-row relative">
         
-        <!-- Start Button -->
-        <button id="startButton" class="w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed">
-            <span id="startButtonText">Start Interview</span>
-            <div id="startSpinner" class="spinner hidden ml-2"></div>
-        </button>
-        
-        <!-- Final Summary -->
-        <div id="summaryContainer" class="mt-6 pt-6 border-t border-gray-200 hidden flex-1 flex-col">
-            <h3 class="text-lg font-semibold text-gray-800 mb-2">Interview Summary</h3>
-            <div class="bg-gray-100 rounded-lg p-4 text-sm text-gray-700 overflow-auto">
-                <!-- Use pre-wrap to respect newlines in the JSON string -->
-                <pre id="summaryContent" class="whitespace-pre-wrap break-all"></pre>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Right Column: Chat Interface -->
-    <div class="w-full md:w-2/3 flex flex-col bg-white">
-        <!-- Chat Window -->
-        <div id="chatWindow" class="flex-1 p-6 space-y-4 overflow-y-auto">
-            <!-- Initial Message -->
-            <div class="flex justify-center">
-                <div class="bg-gray-200 text-gray-700 text-sm py-2 px-4 rounded-full">
-                    Please click "Start Interview" to begin.
+        <!-- Sidebar (Context & Status) -->
+        <div class="w-full md:w-72 bg-gray-50 border-r border-gray-200 p-6 flex flex-col justify-between">
+            <div>
+                <div class="flex items-center space-x-3 mb-10">
+                    <div class="p-2 bg-white border border-gray-200 rounded-lg shadow-sm">
+                        <i data-lucide="bot" class="w-5 h-5 text-gray-700"></i>
+                    </div>
+                    <h1 class="text-lg font-semibold tracking-tight text-gray-900">SRE Interviewer</h1>
+                </div>
+
+                <!-- Subtle Status Indicator -->
+                <div class="mb-8">
+                    <h2 class="text-xs uppercase text-gray-400 font-semibold mb-3 tracking-wider">Status</h2>
+                    <div id="statusBadge" class="inline-flex items-center px-3 py-1 rounded-full border border-gray-200 bg-white text-xs font-medium text-gray-600 shadow-sm">
+                        <div id="statusDot" class="w-1.5 h-1.5 rounded-full bg-gray-400 mr-2"></div>
+                        <span id="statusText">Ready</span>
+                    </div>
+                </div>
+
+                <!-- Topics List -->
+                <div class="space-y-4">
+                    <h2 class="text-xs uppercase text-gray-400 font-semibold tracking-wider">Modules</h2>
+                    <ul class="space-y-1 text-sm text-gray-600">
+                        <li class="flex items-center px-2 py-2 rounded-md hover:bg-gray-100 transition-colors cursor-default">
+                            <i data-lucide="shield-alert" class="w-4 h-4 mr-3 text-gray-400"></i>
+                            Incident Management
+                        </li>
+                        <li class="flex items-center px-2 py-2 rounded-md hover:bg-gray-100 transition-colors cursor-default">
+                            <i data-lucide="search" class="w-4 h-4 mr-3 text-gray-400"></i>
+                            Problem Management
+                        </li>
+                        <li class="flex items-center px-2 py-2 rounded-md hover:bg-gray-100 transition-colors cursor-default">
+                            <i data-lucide="git-pull-request" class="w-4 h-4 mr-3 text-gray-400"></i>
+                            Change Management
+                        </li>
+                        <li class="flex items-center px-2 py-2 rounded-md hover:bg-gray-100 transition-colors cursor-default">
+                            <i data-lucide="book" class="w-4 h-4 mr-3 text-gray-400"></i>
+                            Knowledge Base
+                        </li>
+                    </ul>
                 </div>
             </div>
-            <!-- Chat messages will be appended here -->
-        </div>
-        
-        <!-- Error Display -->
-        <div id="errorDisplay" class="px-6 py-2 text-red-600 text-sm hidden"></div>
-        
-        <!-- Message Input -->
-        <div class="p-6 border-t border-gray-200 bg-gray-50">
-            <div class="flex space-x-3">
-                <input type="text" id="messageInput" class="flex-1 px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100" placeholder="Type your answer..." disabled>
-                <button id="sendButton" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-                    <span id="sendButtonText">Send</span>
-                    <div id="sendSpinner" class="spinner hidden ml-2"></div>
+
+            <!-- Start Action -->
+            <div>
+                <button id="btnStart" onclick="startInterview()" class="w-full bg-gray-900 hover:bg-black text-white text-sm py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center shadow-sm">
+                    <span id="btnStartText">Start Session</span>
+                    <i data-lucide="arrow-right" class="w-4 h-4 ml-2"></i>
                 </button>
             </div>
         </div>
+
+        <!-- Main Chat Area -->
+        <div class="flex-1 flex flex-col bg-white relative">
+            
+            <!-- Header (Mobile only) -->
+            <div class="md:hidden h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4">
+                <span class="font-semibold text-gray-800">SRE Interview</span>
+                <span class="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded-full" id="mobileStatus">Ready</span>
+            </div>
+
+            <!-- Chat Scroll Area -->
+            <div id="chatWindow" class="flex-1 overflow-y-auto p-6 md:p-12 space-y-8 scrollbar-hide pb-32 bg-white">
+                <!-- Welcome Placeholder -->
+                <div id="welcomeState" class="h-full flex flex-col items-center justify-center text-center opacity-60">
+                    <div class="w-16 h-16 bg-gray-50 border border-gray-100 rounded-2xl flex items-center justify-center mb-6">
+                        <i data-lucide="message-square" class="w-8 h-8 text-gray-300"></i>
+                    </div>
+                    <h3 class="text-lg font-medium text-gray-900">Evaluation Session</h3>
+                    <p class="text-sm text-gray-500 max-w-sm mt-2 leading-relaxed">
+                        The automated interviewer will assess technical competency across SRE protocols using real-time knowledge base validation.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Typing Indicator -->
+            <div id="typingIndicator" class="absolute bottom-28 left-12 hidden">
+                <div class="flex items-center space-x-1">
+                    <span class="text-xs text-gray-400 mr-2 font-medium">Interviewer is thinking</span>
+                    <div class="w-1 h-1 bg-gray-400 rounded-full typing-dot"></div>
+                    <div class="w-1 h-1 bg-gray-400 rounded-full typing-dot"></div>
+                    <div class="w-1 h-1 bg-gray-400 rounded-full typing-dot"></div>
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="bg-white p-6 md:p-8">
+                <div class="max-w-4xl mx-auto relative">
+                    <form onsubmit="handleSend(event)" class="relative">
+                        <input 
+                            type="text" 
+                            id="userInput" 
+                            class="w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-1 focus:ring-gray-400 focus:border-gray-400 block w-full p-4 pr-12 transition-all disabled:opacity-50 disabled:cursor-not-allowed placeholder-gray-400" 
+                            placeholder="Type your response..." 
+                            disabled
+                            autocomplete="off"
+                        >
+                        <button 
+                            type="button" 
+                            id="btnSend"
+                            onclick="handleSend(event)"
+                            class="absolute right-3 top-3 p-1.5 text-gray-400 hover:text-gray-900 transition-colors disabled:opacity-0"
+                            disabled
+                        >
+                            <i data-lucide="arrow-up-circle" class="w-6 h-6"></i>
+                        </button>
+                    </form>
+                    <div class="flex justify-between mt-3 px-1">
+                        <p class="text-xs text-gray-400">Press Enter to send</p>
+                        <p class="text-xs text-gray-300">AI-Powered Assessment</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Summary Overlay -->
+            <div id="summaryOverlay" class="absolute inset-0 bg-white/95 backdrop-blur-sm z-50 hidden flex-col items-center justify-center p-4 overflow-y-auto">
+                <div class="bg-white w-full max-w-2xl border border-gray-200 rounded-xl p-8 shadow-2xl animate-fade-in">
+                    <div class="flex items-center justify-between mb-8 border-b border-gray-100 pb-6">
+                        <div>
+                            <h2 class="text-2xl font-semibold text-gray-900">Assessment Report</h2>
+                            <p class="text-sm text-gray-500 mt-1">Complete interview evaluation summary</p>
+                        </div>
+                        <span id="finalRatingBadge" class="px-3 py-1 rounded-full text-xs font-medium tracking-wide uppercase border">
+                            Calculating...
+                        </span>
+                    </div>
+                    
+                    <div class="space-y-8">
+                        <div>
+                            <h3 class="text-xs font-semibold text-gray-900 uppercase tracking-wider mb-3">Executive Summary</h3>
+                            <p id="summaryText" class="text-sm text-gray-600 leading-7"></p>
+                        </div>
+                        
+                        <div>
+                            <h3 class="text-xs font-semibold text-gray-900 uppercase tracking-wider mb-3">Key Observations</h3>
+                            <ul id="takeawaysList" class="space-y-3"></ul>
+                        </div>
+                    </div>
+
+                    <div class="mt-10 pt-6 border-t border-gray-100 flex justify-end">
+                        <button onclick="location.reload()" class="px-5 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-black transition-colors font-medium">
+                            Close Session
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
     </div>
-    
-</div>
 
 <script>
+    // --- State Management ---
+    const state = {
+        candidateId: null,
+        isActive: false,
+        isProcessing: false
+    };
+
     // --- DOM Elements ---
-    const topicsInput = document.getElementById('topicsInput');
-    const startButton = document.getElementById('startButton');
-    const startButtonText = document.getElementById('startButtonText');
-    const startSpinner = document.getElementById('startSpinner');
-    
-    const chatWindow = document.getElementById('chatWindow');
-    const messageInput = document.getElementById('messageInput');
-    const sendButton = document.getElementById('sendButton');
-    const sendButtonText = document.getElementById('sendButtonText');
-    const sendSpinner = document.getElementById('sendSpinner');
-    
-    const errorDisplay = document.getElementById('errorDisplay');
-    const summaryContainer = document.getElementById('summaryContainer');
-    const summaryContent = document.getElementById('summaryContent');
-    
-    // --- State ---
-    let candidateId = null;
-    let isInterviewActive = false;
-    
-    // --- API URLs ---
-    // Use relative paths so it works when served by FastAPI
-    const API_BASE_URL = ''; 
-    const START_URL = `/interview/start`;
-    const NEXT_URL = `/interview/next`;
-    const STATE_URL = (id) => `/interview/state/${id}`;
+    const els = {
+        chatWindow: document.getElementById('chatWindow'),
+        userInput: document.getElementById('userInput'),
+        btnSend: document.getElementById('btnSend'),
+        btnStart: document.getElementById('btnStart'),
+        btnStartText: document.getElementById('btnStartText'),
+        statusText: document.getElementById('statusText'),
+        statusDot: document.getElementById('statusDot'),
+        statusBadge: document.getElementById('statusBadge'),
+        typingIndicator: document.getElementById('typingIndicator'),
+        welcomeState: document.getElementById('welcomeState'),
+        summaryOverlay: document.getElementById('summaryOverlay'),
+        summaryText: document.getElementById('summaryText'),
+        takeawaysList: document.getElementById('takeawaysList'),
+        finalRatingBadge: document.getElementById('finalRatingBadge')
+    };
 
-    // --- Event Listeners ---
-    startButton.addEventListener('click', startInterview);
-    sendButton.addEventListener('click', sendAnswer);
-    messageInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !sendButton.disabled) {
-            sendAnswer();
+    // --- Initial Icon Render ---
+    lucide.createIcons();
+
+    // --- API Client ---
+    const api = {
+        start: async () => {
+            const res = await fetch('/interview/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+            if (!res.ok) throw new Error('Failed to start');
+            return res.json();
+        },
+        next: async (text) => {
+            const res = await fetch('/interview/next', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ candidate_id: state.candidateId, answer: text })
+            });
+            if (!res.ok) throw new Error('Network error');
+            return res.json();
+        },
+        getState: async () => {
+            const res = await fetch(`/interview/state/${state.candidateId}`);
+            return res.json();
         }
-    });
+    };
 
-    /**
-     * Clears the chat and adds a message.
-     * @param {string} sender - 'human', 'agent', 'system', or 'error'
-     * @param {string} text - The message content
-     */
-    function addMessage(sender, text) {
-        if (!text || text.trim().length === 0) {
-            return;
-        }
-
-        const messageEl = document.createElement('div');
-        messageEl.className = 'flex';
-        
-        let bubbleClasses = 'py-2 px-4 rounded-lg max-w-xs md:max-w-md lg:max-w-lg break-words';
-        
-        if (sender === 'human') {
-            messageEl.classList.add('justify-end');
-            bubbleClasses += ' bg-blue-600 text-white shadow';
-        } else if (sender === 'agent') {
-            messageEl.classList.add('justify-start');
-            bubbleClasses += ' bg-gray-200 text-gray-800 shadow-sm';
-        } else if (sender === 'system' || sender === 'error') {
-            messageEl.classList.add('justify-center');
-            bubbleClasses += (sender === 'error') 
-                ? ' bg-red-100 text-red-700' 
-                : ' bg-yellow-100 text-yellow-800';
-            bubbleClasses += ' text-sm font-medium';
-        }
-        
-        messageEl.innerHTML = `<div class="${bubbleClasses}">${text}</div>`;
-        chatWindow.appendChild(messageEl);
-        
-        // Scroll to bottom
-        chatWindow.scrollTop = chatWindow.scrollHeight;
-    }
-
-    /**
-     * Shows or hides an error message below the chat input.
-     * @param {string|null} message - The error text or null to hide.
-     */
-    function showFormError(message) {
-        if (message) {
-            errorDisplay.textContent = message;
-            errorDisplay.classList.remove('hidden');
+    // --- UI Actions ---
+    function setStatus(status) {
+        if (status === 'active') {
+            els.statusText.innerText = 'Active';
+            els.statusDot.className = 'w-1.5 h-1.5 rounded-full bg-green-500 mr-2';
+            els.statusBadge.className = 'inline-flex items-center px-3 py-1 rounded-full border border-green-200 bg-green-50 text-xs font-medium text-green-700';
+        } else if (status === 'completed') {
+            els.statusText.innerText = 'Completed';
+            els.statusDot.className = 'w-1.5 h-1.5 rounded-full bg-blue-500 mr-2';
+            els.statusBadge.className = 'inline-flex items-center px-3 py-1 rounded-full border border-blue-200 bg-blue-50 text-xs font-medium text-blue-700';
+        } else if (status === 'error') {
+            els.statusText.innerText = 'Error';
+            els.statusDot.className = 'w-1.5 h-1.5 rounded-full bg-red-500 mr-2';
+            els.statusBadge.className = 'inline-flex items-center px-3 py-1 rounded-full border border-red-200 bg-red-50 text-xs font-medium text-red-700';
         } else {
-            errorDisplay.classList.add('hidden');
+            els.statusText.innerText = 'Ready';
+            els.statusDot.className = 'w-1.5 h-1.5 rounded-full bg-gray-400 mr-2';
+            els.statusBadge.className = 'inline-flex items-center px-3 py-1 rounded-full border border-gray-200 bg-white text-xs font-medium text-gray-600 shadow-sm';
         }
     }
-    
-    /**
-     * Clears the initial "Start Interview" message.
-     */
-    function clearInitialMessage() {
-        const initialMessage = chatWindow.querySelector('.justify-center');
-        if (initialMessage && initialMessage.textContent.includes('start the interview')) {
-            chatWindow.innerHTML = '';
-        }
-    }
-    
-    /**
-     * Handles starting the interview.
-     */
-    async function startInterview() {
-        showFormError(null);
-        clearInitialMessage();
-        
-        // Set loading state
-        startButton.disabled = true;
-        startButtonText.textContent = 'Starting...';
-        startSpinner.classList.remove('hidden');
-        
-        // Topics are now sent from the server, so we send an empty POST
-        try {
-            const response = await fetch(START_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({}) 
-            });
-            
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(`Server error: ${response.statusText}. Detail: ${errorData.detail}`);
-            }
-            
-            const data = await response.json();
-            
-            // Success
-            candidateId = data.candidate_id;
-            isInterviewActive = true;
-            addMessage('agent', data.agent_message);
-            
-            // Update UI state
-            topicsInput.disabled = true;
-            messageInput.disabled = false;
-            sendButton.disabled = false;
-            messageInput.focus();
-            
-        } catch (error) {
-            console.error('Start Interview Error:', error);
-            addMessage('error', `Failed to start interview. ${error.message}`);
-            startButton.disabled = false;
-            startButtonText.textContent = 'Start Interview';
-        } finally {
-            startSpinner.classList.add('hidden');
-        }
-    }
-    
-    /**
-     * Handles sending a candidate's answer.
-     */
-    async function sendAnswer() {
-        const answer = messageInput.value.trim();
-        if (!answer || !isInterviewActive) {
-            return;
-        }
-        
-        showFormError(null);
-        addMessage('human', answer);
-        messageInput.value = '';
-        
-        // Set loading state
-        sendButton.disabled = true;
-        messageInput.disabled = true;
-        sendButtonText.textContent = '';
-        sendSpinner.classList.remove('hidden');
-        
-        let data = null; 
-        
-        try {
-            const response = await fetch(NEXT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    candidate_id: candidateId,
-                    answer: answer
-                })
-            });
-            
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(`Server error: ${response.statusText}. Detail: ${errorData.detail}`);
-            }
-            
-            data = await response.json();
-            addMessage('agent', data.agent_message);
-            
-            if (data.is_interview_over) {
-                endInterview();
-            }
-            
-        } catch (error) {
-            console.error('Send Answer Error:', error);
-            addMessage('error', `Failed to send message. ${error.message}`);
-        } finally {
-            // Remove loading state, unless interview is over
-            if (!data || !data.is_interview_over) {
-                sendButton.disabled = false;
-                messageInput.disabled = false;
-                sendButtonText.textContent = 'Send';
-                sendSpinner.classList.add('hidden');
-                messageInput.focus();
-            }
-        }
-    }
-    
-    /**
-     * Fetches and displays the final summary.
-     */
-    async function endInterview() {
-        isInterviewActive = false;
-        
-        // Disable chat input permanently
-        messageInput.disabled = true;
-        sendButton.disabled = true;
-        sendButtonText.textContent = 'Done';
-        sendSpinner.classList.add('hidden');
-        messageInput.placeholder = 'Interview has concluded.';
-        
-        addMessage('system', 'Interview has concluded. Fetching summary...');
-        
-        try {
-            const response = await fetch(STATE_URL(candidateId));
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(`Server error: ${response.statusText}. Detail: ${errorData.detail}`);
-            }
-            
-            const state = await response.json();
 
-            if (state.final_summary) {
-                // Display the JSON summary nicely formatted
-                summaryContent.textContent = JSON.stringify(state.final_summary, null, 2);
-                summaryContainer.classList.remove('hidden');
-            } else {
-                addMessage('error', 'Could not retrieve final summary.');
-            }
-            
-        } catch (error) {
-            console.error('Fetch Summary Error:', error);
-            addMessage('error', `Failed to fetch summary. ${error.message}`);
+    function toggleInput(enabled) {
+        els.userInput.disabled = !enabled;
+        els.btnSend.disabled = !enabled;
+        if (enabled) {
+            setTimeout(() => els.userInput.focus(), 100);
         }
     }
+
+    function toggleTyping(show) {
+        if (show) {
+            els.typingIndicator.classList.remove('hidden');
+            els.chatWindow.scrollTop = els.chatWindow.scrollHeight;
+        } else {
+            els.typingIndicator.classList.add('hidden');
+        }
+    }
+
+    function appendMessage(role, text) {
+        const isBot = role === 'agent';
+        const div = document.createElement('div');
+        div.className = `flex w-full ${isBot ? 'justify-start' : 'justify-end'} message-appear`;
+        
+        // Simplified Avatar
+        const avatar = isBot 
+            ? `<div class="w-8 h-8 rounded-lg bg-white border border-gray-200 flex items-center justify-center flex-shrink-0 mr-4 shadow-sm"><i data-lucide="bot" class="w-4 h-4 text-gray-600"></i></div>`
+            : ``;
+
+        // Professional Clean Styling
+        // Bot: White card with border
+        // User: Dark Gray pill
+        const contentClass = isBot 
+            ? "bg-white border border-gray-100 text-gray-800 rounded-2xl rounded-tl-none shadow-sm px-6 py-4" 
+            : "bg-gray-900 text-white rounded-2xl rounded-tr-none px-5 py-3 shadow-sm";
+
+        div.innerHTML = `
+            ${avatar}
+            <div class="max-w-[75%] ${contentClass}">
+                <p class="text-sm leading-7 whitespace-pre-wrap font-light">${text}</p>
+            </div>
+        `;
+
+        els.chatWindow.appendChild(div);
+        lucide.createIcons();
+        els.chatWindow.scrollTop = els.chatWindow.scrollHeight;
+    }
+
+    // --- Business Logic ---
+
+    async function startInterview() {
+        els.welcomeState.classList.add('hidden');
+        els.chatWindow.innerHTML = ''; 
+        els.btnStart.disabled = true;
+        els.btnStartText.innerText = 'Running...';
+        setStatus('active');
+        
+        try {
+            toggleTyping(true);
+            const data = await api.start();
+            toggleTyping(false);
+            
+            state.candidateId = data.candidate_id;
+            state.isActive = true;
+            
+            appendMessage('agent', data.agent_message);
+            toggleInput(true);
+            
+        } catch (e) {
+            console.error(e);
+            alert("Connection error. Please check console.");
+            toggleTyping(false);
+            els.btnStart.disabled = false;
+            els.btnStartText.innerText = 'Start Session';
+            setStatus('error');
+        }
+    }
+
+    async function handleSend(e) {
+        e.preventDefault();
+        if (state.isProcessing || !state.isActive) return;
+
+        const text = els.userInput.value.trim();
+        if (!text) return;
+
+        els.userInput.value = '';
+        appendMessage('user', text);
+        toggleInput(false);
+        state.isProcessing = true;
+        toggleTyping(true);
+
+        try {
+            const data = await api.next(text);
+            
+            toggleTyping(false);
+            state.isProcessing = false;
+
+            if (data.agent_message) {
+                appendMessage('agent', data.agent_message);
+            }
+
+            if (data.is_interview_over) {
+                await finishInterview();
+            } else {
+                toggleInput(true);
+            }
+
+        } catch (err) {
+            console.error(err);
+            toggleTyping(false);
+            state.isProcessing = false;
+            toggleInput(true); 
+        }
+    }
+
+    async function finishInterview() {
+        state.isActive = false;
+        setStatus('completed');
+        toggleInput(false);
+        els.userInput.placeholder = "Session Ended.";
+        
+        appendMessage('agent', "Generating final evaluation report...");
+        
+        try {
+            const data = await api.getState();
+            const summary = data.final_summary;
+
+            if (summary) {
+                renderSummary(summary);
+            } else {
+                alert("Summary generation failed.");
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    function renderSummary(summary) {
+        const rating = summary.overall_rating || "Review";
+        
+        // Professional muted badges
+        const colors = {
+            "Strong Hire": "bg-green-50 text-green-700 border-green-200 border",
+            "Hire": "bg-blue-50 text-blue-700 border-blue-200 border",
+            "No Hire": "bg-gray-100 text-gray-700 border-gray-200 border"
+        };
+        const badgeClass = colors[rating] || "bg-gray-50 text-gray-600 border-gray-200 border";
+        
+        els.finalRatingBadge.className = `px-3 py-1 rounded-md text-xs font-medium tracking-wide uppercase ${badgeClass}`;
+        els.finalRatingBadge.innerText = rating;
+
+        els.summaryText.innerText = summary.summary_text;
+
+        els.takeawaysList.innerHTML = summary.key_takeaways
+            .map(t => `<li class="flex items-start"><i data-lucide="check" class="w-4 h-4 text-gray-400 mt-1 mr-3 flex-shrink-0"></i><span class="text-gray-600 text-sm leading-6">${t}</span></li>`)
+            .join('');
+        
+        lucide.createIcons();
+
+        setTimeout(() => {
+            els.summaryOverlay.classList.remove('hidden');
+            els.summaryOverlay.classList.add('flex');
+        }, 1500);
+    }
+
 </script>
 </body>
 </html>
