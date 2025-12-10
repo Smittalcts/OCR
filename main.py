@@ -23,8 +23,11 @@ from langgraph.checkpoint.memory import MemorySaver
 from typing_extensions import TypedDict
 from langchain_core.globals import set_debug
 
-# --- Database Import (Assumes simple_db.py exists in same folder) ---
+# --- Database Import ---
 import simple_db
+
+# --- Prompts Import ---
+import prompts
 
 # --- Environment Setup ---
 load_dotenv()
@@ -36,7 +39,7 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 sys_logger = logging.getLogger("InterviewLogger")
-set_debug(False)
+set_debug(True)
 
 def check_env_vars():
     required_vars = ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT", "OPENAI_API_VERSION"]
@@ -79,7 +82,7 @@ class InterviewLogger:
         
         # Filter noise from input state
         keys_to_log = [
-            "current_decision", "candidate_answer", "user_intent", 
+            "current_decision", "candidate_answer", 
             "retrieval_attempts", "is_context_valid", "current_search_query",
             "last_turn_feedback"
         ]
@@ -120,18 +123,11 @@ class TopicDecision(BaseModel):
     is_new_main_topic: bool = Field(False)
     is_first_turn: bool = Field(False)
 
-class UserIntent(BaseModel):
-    intent: Literal["answer", "clarification", "off_topic"]
-
-# --- UPDATED: Split Fields for Natural Flow ---
 class GeneratedQuestion(BaseModel):
-    conversational_entry: str = Field(..., description="The social bridge (e.g., 'That's correct. Now...')")
+    conversational_entry: str = Field(..., description="The social bridge")
     technical_question: str = Field(..., description="The actual interview question.")
     expected_answer: str
-
-class ClarificationResponse(BaseModel):
-    explanation_part: str = Field(..., description="Direct answer to the user's confusion.")
-    follow_up_question: str = Field(..., description="The original or simplified interview question to get back on track.")
+    question_source: Literal["sample_question", "generated_from_context"] = Field(..., description="Source of the question.")
 
 class EvaluationResult(BaseModel):
     score: int
@@ -163,7 +159,7 @@ class InterviewState(TypedDict):
     topic_plan: Dict[str, str] 
     current_subtopic_index: int
     is_interview_over: bool
-    message_history: Annotated[List[BaseMessage], operator.add] 
+    message_history: List[BaseMessage]
     
     current_decision: Optional[TopicDecision]
     
@@ -175,7 +171,6 @@ class InterviewState(TypedDict):
     is_context_valid: bool
     
     candidate_answer: Optional[str]
-    user_intent: Optional[str]
     
     last_question: Optional[str]
     last_expected_answer: Optional[str]
@@ -216,7 +211,7 @@ try:
         azure_deployment=os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME"),
     )
     vector_store = Chroma(persist_directory=PERSIST_DIRECTORY, embedding_function=embeddings_model)
-    retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 3})
+    retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 6})
     sys_logger.info(f"Loaded Chroma DB.")
 except Exception as e:
     sys_logger.error(f"Error initializing Chroma: {e}")
@@ -230,87 +225,14 @@ async def retrieve_context_tool(query: str) -> str:
         return f"Search Error: {e}"
 
 # Structured Chains
-llm_intent = llm_client.with_structured_output(UserIntent)
 llm_eval = llm_client.with_structured_output(EvaluationResult)
 llm_gen = llm_client.with_structured_output(GeneratedQuestion)
-llm_clarify = llm_client.with_structured_output(ClarificationResponse)
 llm_sum = llm_client.with_structured_output(FinalSummary)
 llm_check = llm_client.with_structured_output(RelevanceCheck)
 
 # ==============================================================================
-# 4. PROMPTS (INLINED FOR STABILITY)
+# 5. NODES (Refactored)
 # ==============================================================================
-
-INTENT_SYSTEM = SystemMessage(content="""
-ROLE: Dialogue Intent Classifier.
-CATEGORIES:
-1. "answer": Candidate is attempting to answer the question.
-2. "clarification": Candidate is asking for definition, help, or context.
-3. "off_topic": Completely irrelevant.
-""")
-
-VALIDATION_SYSTEM = SystemMessage(content="""
-ROLE: Content Auditor.
-TASK: Check if retrieved text is sufficient for a Senior Interview.
-OUTPUT: JSON with status ("sufficient"/"partial"/"irrelevant") and "refined_context" (Clean Cheat Sheet).
-If partial/irrelevant, provide a better "search_query".
-""")
-
-def get_qgen_prompt(decision, refined_context, prev_feedback, flags):
-    # Dynamic Transition Construction
-    if flags.get("is_first_turn"):
-        trans_instr = f"OPENING: Greet professionally. State topic: {decision.topic}."
-    elif flags.get("is_new_main_topic"):
-        trans_instr = f"TRANSITION: 'That covers the previous section. Moving on to {decision.topic}...'"
-    elif flags.get("is_last_in_topic"):
-        trans_instr = f"TRANSITION: Acknowledge answer using: '{prev_feedback}'. Mention this is the last question on this topic."
-    else:
-        trans_instr = f"TRANSITION: Acknowledge answer using: '{prev_feedback}'."
-
-    return f"""
-    ROLE: Senior On-Call SRE Interviewer.
-    GOAL: Natural, human-like flow.
-    
-    CONTEXT:
-    - Topic: {decision.topic} -> {decision.sub_topic}
-    - Cheat Sheet: {refined_context}
-    
-    INSTRUCTIONS:
-    1. {trans_instr}
-    2. ASK: Formulate a specific question based on the Cheat Sheet.
-    
-    IMPORTANT: Split your response into 'conversational_entry' (The bridge/greeting) and 'technical_question' (The actual question).
-    """
-
-CLARIFICATION_SYSTEM = """
-ROLE: Helpful Interviewer.
-USER SITUATION: Candidate asked for clarification on the previous question.
-INSTRUCTIONS:
-1. 'explanation_part': Explain the concept simply using the Context.
-2. 'follow_up_question': Re-phrase the original question to be clearer.
-"""
-
-EVALUATOR_SYSTEM = SystemMessage(content="""
-ROLE: Technical Grader.
-INSTRUCTIONS:
-1. Score 0-10 based on RAG Context.
-2. Generate 'feedback_for_next_node': A conversational sentence summarizing how they did (e.g., "Great point on X, but you missed Y.").
-""")
-
-# ==============================================================================
-# 5. NODES
-# ==============================================================================
-
-# --- NODE: INTENT ROUTER ---
-async def node_intent_router(state: InterviewState) -> Dict[str, Any]:
-    if not state.get("candidate_answer"):
-        return {"user_intent": "answer"}
-    
-    msgs = [INTENT_SYSTEM, HumanMessage(content=state["candidate_answer"])]
-    res = await llm_intent.ainvoke(msgs)
-    
-    logger.log_node_exec("intent_router", state, prompt_data=msgs, output={"intent": res.intent})
-    return {"user_intent": res.intent}
 
 # --- NODE: EVALUATE ---
 async def node_evaluate(state: InterviewState) -> Dict[str, Any]:
@@ -319,8 +241,15 @@ async def node_evaluate(state: InterviewState) -> Dict[str, Any]:
     expected = state.get('last_expected_answer', "N/A")
     context = state.get('refined_context') or state.get('retrieved_context', "N/A")
     
-    user_msg = f"QUESTION: {question}\nANSWER: {answer}\nEXPECTED: {expected}\nCONTEXT: {context}"
-    msgs = [EVALUATOR_SYSTEM, HumanMessage(content=user_msg)]
+    # Use template from prompts.py
+    user_msg_content = prompts.EVALUATOR_USER_TEMPLATE.format(
+        question=question,
+        answer=answer,
+        expected=expected,
+        context=context
+    )
+    
+    msgs = [prompts.EVALUATOR_SYSTEM, HumanMessage(content=user_msg_content)]
     
     eval_result = await llm_eval.ainvoke(msgs)
     
@@ -349,31 +278,6 @@ async def node_evaluate(state: InterviewState) -> Dict[str, Any]:
         "candidate_answer": None
     }
     logger.log_node_exec("evaluate", state, prompt_data=msgs, output=output)
-    return output
-
-# --- NODE: CLARIFICATION ---
-async def node_handle_clarification(state: InterviewState) -> Dict[str, Any]:
-    last_q = state.get("last_question", "")
-    context = state.get("refined_context") or state.get("retrieved_context", "")
-    
-    user_msg = f"USER ASKED: {state['candidate_answer']}\nORIGINAL QUESTION: {last_q}\nCONTEXT: {context}"
-    msgs = [SystemMessage(content=CLARIFICATION_SYSTEM), HumanMessage(content=user_msg)]
-    
-    res = await llm_clarify.ainvoke(msgs)
-    
-    # Natural concatenation: Explanation + Follow-up
-    full_response = f"{res.explanation_part} {res.follow_up_question}"
-    
-    curr_hist = state.get('message_history', [])
-    curr_hist.append(HumanMessage(content=state['candidate_answer']))
-    curr_hist.append(AIMessage(content=full_response))
-    
-    output = {
-        "agent_message": full_response,
-        "message_history": curr_hist[-6:], # Keep history light
-        "candidate_answer": None
-    }
-    logger.log_node_exec("handle_clarification", state, prompt_data=msgs, output=output)
     return output
 
 # --- NODE: STRATEGIST ---
@@ -486,8 +390,14 @@ async def node_validate(state: InterviewState) -> Dict[str, Any]:
     decision = state['current_decision']
     context = state['retrieved_context']
     
-    user_msg = f"TOPIC: {decision.topic}\nSUBTOPIC: {decision.sub_topic}\nRAW TEXT: {context[:1500]}"
-    msgs = [VALIDATION_SYSTEM, HumanMessage(content=user_msg)]
+    # Use template from prompts.py
+    user_msg_content = prompts.VALIDATION_USER_TEMPLATE.format(
+        topic=decision.topic,
+        sub_topic=decision.sub_topic,
+        context_snippet=context[:1500]
+    )
+    
+    msgs = [prompts.VALIDATION_SYSTEM, HumanMessage(content=user_msg_content)]
     
     res = await llm_check.ainvoke(msgs)
     
@@ -506,6 +416,11 @@ async def node_generate(state: InterviewState) -> Dict[str, Any]:
     prev_feedback = state.get('last_turn_feedback', "Let's begin.")
     is_valid = state.get('is_context_valid', True)
     
+    # Fetch Sample Questions from TOPIC_DATA
+    topic_info = TOPIC_DATA.get(decision.topic, {})
+    sample_questions = topic_info.get("sample_questions", [])
+    sample_qs_text = "\n".join([f"- {q}" for q in sample_questions])
+    
     flags = {
         "is_first_turn": decision.is_first_turn,
         "is_new_main_topic": decision.is_new_main_topic,
@@ -513,13 +428,19 @@ async def node_generate(state: InterviewState) -> Dict[str, Any]:
         "is_context_valid": is_valid
     }
     
-    prompt_str = get_qgen_prompt(decision, refined_context, prev_feedback, flags)
+    # Call the logic from prompts.py with sample questions
+    prompt_str = prompts.get_qgen_system_prompt(decision, refined_context, prev_feedback, flags, sample_qs_text)
     
-    # OPTIMIZATION: Clean context window, only system prompt (with cheat sheet) is sent
     msgs = [SystemMessage(content=prompt_str)]
     
     gen = await llm_gen.ainvoke(msgs)
     
+    # Log usage of sample questions
+    if gen.question_source == "sample_question":
+        sys_logger.info(f"📌 Using Sample Question for {decision.sub_topic}: {gen.technical_question}")
+    else:
+        sys_logger.info(f"⚡ Generating New Question for {decision.sub_topic}")
+
     # Combine conversational entry + question for natural flow
     full_message = f"{gen.conversational_entry} {gen.technical_question}"
     
@@ -542,8 +463,11 @@ async def node_summarize(state: InterviewState) -> Dict[str, Any]:
     all_turns = simple_db.get_turn_data(state['session_id'])
     log_str = str([{ "topic": t['topic'], "score": t['score'], "feedback": t['evaluation_feedback']} for t in all_turns])
     
-    summ_sys = SystemMessage(content="ROLE: Hiring Manager. Summarize interview performance.")
-    msgs = [summ_sys, HumanMessage(content=f"Interview Logs: {log_str}")]
+    # Use prompts.py
+    msgs = [
+        prompts.SUMMARIZER_SYSTEM, 
+        HumanMessage(content=f"{prompts.SUMMARIZER_USER_PREFIX}{log_str}")
+    ]
     
     summary = await llm_sum.ainvoke(msgs)
     simple_db.save_summary(state['session_id'], summary.overall_rating, summary.summary_text)
@@ -560,8 +484,6 @@ async def node_end(state):
 # ==============================================================================
 
 workflow = StateGraph(InterviewState)
-workflow.add_node("intent_router", node_intent_router)
-workflow.add_node("handle_clarification", node_handle_clarification)
 workflow.add_node("evaluate", node_evaluate)
 workflow.add_node("strategize", node_strategize)
 workflow.add_node("retrieve", node_retrieve)
@@ -572,13 +494,8 @@ workflow.add_node("end", node_end)
 
 def route_start(state):
     if not state.get("session_id"): return "strategize"
-    if state.get("candidate_answer"): return "intent_router"
+    if state.get("candidate_answer"): return "evaluate"
     return "strategize"
-
-def route_intent(state):
-    intent = state.get("user_intent", "answer")
-    if intent == "clarification": return "handle_clarification"
-    return "evaluate"
 
 def route_strategy(state):
     if state['current_decision'].action == "end_interview": return "summarize"
@@ -592,9 +509,8 @@ def route_validate(state):
     else:
         return "generate" # Fallback
 
-workflow.add_conditional_edges(START, route_start, {"intent_router": "intent_router", "strategize": "strategize"})
-workflow.add_conditional_edges("intent_router", route_intent, {"handle_clarification": "handle_clarification", "evaluate": "evaluate"})
-workflow.add_edge("handle_clarification", END)
+# Simplified Edges (No Intent Router)
+workflow.add_conditional_edges(START, route_start, {"evaluate": "evaluate", "strategize": "strategize"})
 workflow.add_edge("evaluate", "strategize")
 workflow.add_conditional_edges("strategize", route_strategy, {"summarize": "summarize", "retrieve": "retrieve"})
 workflow.add_edge("retrieve", "validate")

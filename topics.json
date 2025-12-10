@@ -2,16 +2,8 @@
     "Incident Management": {
       "sub_topics": [
         "Incident lifecycle",
-        "Priorities / it's resolution and acceptance timing",
-        "Role of Technical Incident Lead",
-        "ITASK process",
-        "Three strike rules",
-        "Role of GFS (Global Frontline Support)",
-        "Inbound & outbound team workgroups/contacts",
-        "NSI P2",
-        "On Hold incident status",
-        "KB article attachment process",
-        "SLA exception process"
+        "Priorities / it's resolution and acceptance timing"
+        
       ],
       "sample_questions": [
         "Is the Associate aware of end to end incident process flow?",
@@ -43,9 +35,8 @@
     },
     "Change Management": {
       "sub_topics": [
-        "Change types (Standard, Normal, Emergency)",
-        "Change Advisory Board (CAB)",
-        "Change implementation process"
+        "Change types (Standard, Normal, Emergency)"
+        
       ],
       "sample_questions": [
         "What are the three main types of changes?",
@@ -55,9 +46,7 @@
     },
     "Knowledge Management": {
       "sub_topics": [
-        "KEDB (Known Error Database)",
-        "Creating and maintaining KB articles",
-        "Knowledge sharing culture"
+        "KEDB (Known Error Database)"
       ],
       "sample_questions": [
         "What is the purpose of the Knowledge Management process?",

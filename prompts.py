@@ -3,50 +3,50 @@ from langchain_core.messages import SystemMessage, HumanMessage
 # ==============================================================================
 # 1. INTENT CLASSIFICATION
 # ==============================================================================
-INTENT_SYSTEM = SystemMessage(content="""
-ROLE: Dialogue Intent Classifier.
-GOAL: Classify the candidate's latest message into exactly one category.
+# INTENT_SYSTEM = SystemMessage(content="""
+# ROLE: Dialogue Intent Classifier.
+# GOAL: Classify the candidate's latest message into exactly one category.
 
-CATEGORIES:
-1. "answer": The candidate is attempting to answer the technical question.
-2. "clarification": The candidate is asking for help, definitions, or clarifying the question.
-3. "off_topic": The candidate is chatting about something irrelevant.
+# CATEGORIES:
+# 1. "answer": The candidate is attempting to answer the technical question.
+# 2. "clarification": The candidate is asking for help, definitions, or clarifying the question.
+# 3. "off_topic": The candidate is chatting about something irrelevant.
 
-OUTPUT SCHEMA:
-JSON: { "intent": "answer" | "clarification" | "off_topic" }
-""")
+# OUTPUT SCHEMA:
+# JSON: { "intent": "answer" | "clarification" | "off_topic" }
+# """)
 
 # ==============================================================================
 # 2. CONTEXT VALIDATOR & REFINER (The "Smart Auditor")
 # ==============================================================================
 VALIDATION_SYSTEM = SystemMessage(content="""
 ROLE: Technical Content Auditor & Researcher.
-GOAL: Ensure the retrieved data is sufficient for a Senior SRE Interview.
+GOAL: Ensure the retrieved data is sufficient for a OnCall Support services Interview.
 
 INPUT: Raw text chunks from a knowledge base.
 TASK: Evaluate relevance, sufficiency, and clarity for the specific SUBTOPIC.
 
 STATUS DEFINITIONS:
-- "sufficient": Contains clear definitions, workflows, or metrics (SLAs) for the subtopic.
-- "partial": Mentioned the topic but lacks depth (e.g., headers only, or missing steps).
+- "sufficient": Contains clear definitions, workflows, or relevant data for the subtopic atleast 70% relevant data.
+- "partial": More then 50% of data is irrelevant.
 - "irrelevant": Completely unrelated data.
 
 INSTRUCTIONS:
 1. IF "sufficient":
    - Set status to "sufficient".
-   - **refined_context**: Rewrite the raw text into a bulleted "Interviewer Cheat Sheet". Remove fluff, intros, and table of contents. Keep strictly technical facts.
+   - **refined_context**: Return the RAW input text chunks joined together
    - **search_query**: null.
 
 2. IF "partial" OR "irrelevant":
    - Set status to "partial" or "irrelevant".
-   - **refined_context**: null.
+   - **refined_context**: Return the RAW input text chunks joined together.
    - **search_query**: Write a specific, keyword-heavy search query to find the missing information. (e.g., "Incident Management SLA matrix p1 p2 resolution times").
 
 OUTPUT SCHEMA:
 JSON: {
     "status": "sufficient" | "partial" | "irrelevant",
-    "reason": "Why is it partial/irrelevant?",
-    "refined_context": "The cleaned up cheat sheet (if sufficient) or null",
+    "reason": "Why is it partial/irrelevant? max 1 line only",
+    "refined_context": "The cleaned up cheat sheet of atleast 1000 words",
     "search_query": "The better query (if not sufficient) or null"
 }
 """)
@@ -62,7 +62,7 @@ RAW RETRIEVED TEXT:
 # ==============================================================================
 # 3. QUESTION GENERATOR (Receives Refined Context)
 # ==============================================================================
-def get_qgen_system_prompt(decision, refined_context, prev_feedback, flags):
+def get_qgen_system_prompt(decision, refined_context, prev_feedback, flags,sample_qs_text=""):
     
     # 1. Dynamic Transition Logic
     if flags.get("is_first_turn"):
@@ -77,12 +77,11 @@ def get_qgen_system_prompt(decision, refined_context, prev_feedback, flags):
     # 2. Fallback (If retrieval failed after retries)
     if not flags.get("is_context_valid", True):
         return f"""
-        ROLE: Senior Site Reliability Engineer.
-        MODE: FALLBACK (Docs unavailable).
+        ROLE: Senior Support services engineer.
         INSTRUCTIONS:
         1. {transition_instr}
         2. ASK: Ask a standard industry question about '{decision.sub_topic}'.
-        3. CONSTRAINT: Do NOT mention "I couldn't find documents". Just ask from general SRE knowledge.
+        3. CONSTRAINT: Do NOT mention "I couldn't find documents". Just ask from general Oncall support service knowledge.
         
         OUTPUT SCHEMA:
         JSON: {{ "question": "...", "expected_answer": "..." }}
@@ -90,7 +89,7 @@ def get_qgen_system_prompt(decision, refined_context, prev_feedback, flags):
 
     # 3. Standard Mode (Using REFINED Context)
     return f"""
-    ROLE: Senior On-Call SRE Interviewer.
+    ROLE: Senior On-Call Support services Interviewer.
     GOAL: Natural assessment using provided notes.
     
     CONTEXT:
@@ -99,52 +98,60 @@ def get_qgen_system_prompt(decision, refined_context, prev_feedback, flags):
     
     INTERVIEWER CHEAT SHEET (Truth Source):
     {refined_context}
-    
-    CHECK: Did the candidate already answer this in the previous turn?
-    - YES: Ask a SCENARIO based on the Cheat Sheet.
-    - NO: Ask the standard definition/process question.
 
+    AVAILABLE SAMPLE QUESTIONS (Reference only):
+    {sample_qs_text}
+    -use relevant sample questions to phrase better questions.
+    
     INSTRUCTIONS:
     1. {transition_instr}
-    2. ASK: Create a question based on the CHEAT SHEET.
-    3. CONSTRAINT: Keep it under 3 sentences.
+    2. ASK: Create a question based on the CHEAT SHEET,TOPIC and SUBTOPIC.
+    3. EXPECTED ANSWER:A 3-4 line answer that completely and perfectly answers the question.double check the answer
+
+    RULES:
+    - make sure the question and answer generated are relevant to TOPIC and SUBTOPIC.
 
     OUTPUT SCHEMA:
     JSON: {{
         "question": "The question text",
-        "expected_answer": "A 3-4 line technical summary based on the Cheat Sheet."
+        "expected_answer": "A 3-4 line answer that completely and perfectly answers the question.double check the answer"
     }}
     """
 
-def get_clarification_prompt(last_question, context):
-    return f"""
-    ROLE: Helpful Interviewer.
-    USER SITUATION: Candidate asked for clarification on: "{last_question}".
+# def get_clarification_prompt(last_question, context):
+#     return f"""
+#     ROLE: Helpful Interviewer.
+#     USER SITUATION: Candidate asked for clarification on: "{last_question}".
     
-    CONTEXT:
-    {context}
+#     CONTEXT:
+#     {context}
     
-    INSTRUCTIONS:
-    1. Explain the concept simply using the Context.
-    2. Re-phrase and re-ask the question.
+#     INSTRUCTIONS:
+#     1. Explain the concept simply using the Context.
+#     2. Re-phrase and re-ask the question.
     
-    OUTPUT SCHEMA:
-    JSON: {{ "question": "...", "expected_answer": "..." }}
-    """
+#     OUTPUT SCHEMA:
+#     JSON: {{ "question": "...", "expected_answer": "..." }}
+#     """
 
 # ==============================================================================
 # 4. EVALUATOR
 # ==============================================================================
 EVALUATOR_SYSTEM = SystemMessage(content="""
-ROLE: Strict Technical Grader.
-GOAL: Evaluate answer vs RAG Context.
+ROLE: Strict Support services Grader.
+GOAL: Evaluate user answer vs Expected answer & RAG Context.
 
 INSTRUCTIONS:
 1. Score 0-10.
+   scoring rule: ZERO_SCORE_RULE : completely wrong or irrelevant answer : score 0
+                 FULL_SCORE_RULE : answer is above 80% correct  : score 10                                              
 2. FEEDBACK: Create a "Conversational Bridge" for the next turn.
-   - Score < 5: "That's not quite right. We look for [Concept]."
-   - Score > 8: "Spot on. You nailed [Concept]."
-   - Score 5-7: "You're close, but missed [Gap]."
+   - Score < 5: eg : "That's not quite right. We look for [Concept]. or your answer is wrong"
+   - Score > 8: eg : "Spot on. You nailed [Concept]. or good answer lets move to next question"
+   - Score 5-7: eg : "You're close, but missed [Gap]. or I expected a better answer"
+
+RULES:
+- When the user answer is phrased differently but has the same meaning as the expected answer with all main points covered,it should be awarded full marks : score 10                                                                  
 
 OUTPUT SCHEMA:
 JSON: {{
@@ -157,7 +164,10 @@ JSON: {{
 
 EVALUATOR_USER_TEMPLATE = """
 QUESTION: {question}
-CANDIDATE ANSWER: {answer}
+CANDIDATE ANSWER: 
+<candidate_answer>
+{answer}
+</candidate_answer>
 EXPECTED ANSWER: {expected}
 RAG CONTEXT: {context}
 """
