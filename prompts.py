@@ -45,7 +45,7 @@ INSTRUCTIONS:
 OUTPUT SCHEMA:
 JSON: {
     "status": "sufficient" | "partial" | "irrelevant",
-    "reason": "Why is it partial/irrelevant? max 1 line only",
+    "reason": "Why is it partial/irrelevant? MAX 1 line only",
     "refined_context": "The cleaned up cheat sheet of atleast 1000 words",
     "search_query": "The better query (if not sufficient) or null"
 }
@@ -68,9 +68,9 @@ def get_qgen_system_prompt(decision, refined_context, prev_feedback, flags,sampl
     if flags.get("is_first_turn"):
         transition_instr = f"OPENING: This is the START. Greet professionally. Introduce topic: {decision.topic}."
     elif flags.get("is_new_main_topic"):
-        transition_instr = f"TRANSITION: Previous section done. Say 'That wraps up that section. Moving on to {decision.topic}.'"
+        transition_instr = f"TRANSITION: Previous section done. Say like 'That wraps up that section. Moving on to {decision.topic}.'"
     elif flags.get("is_last_in_topic"):
-        transition_instr = f"TRANSITION: Use feedback '{prev_feedback}'. Mention this is the FINAL question on {decision.topic}."
+        transition_instr = f"TRANSITION: Use feedback '{prev_feedback}'. Mention like this is the FINAL question on {decision.topic}."
     else:
         transition_instr = f"TRANSITION: Acknowledge last answer: '{prev_feedback}'. (e.g., 'Good point, moving on...')"
 
@@ -80,7 +80,7 @@ def get_qgen_system_prompt(decision, refined_context, prev_feedback, flags,sampl
         ROLE: Senior Support services engineer.
         INSTRUCTIONS:
         1. {transition_instr}
-        2. ASK: Ask a standard industry question about '{decision.sub_topic}'.
+        2. ASK: Ask a standard support services question about topic: '{decision.topic}' +'{decision.sub_topic}'.
         3. CONSTRAINT: Do NOT mention "I couldn't find documents". Just ask from general Oncall support service knowledge.
         
         OUTPUT SCHEMA:
@@ -96,12 +96,12 @@ def get_qgen_system_prompt(decision, refined_context, prev_feedback, flags,sampl
     - TOPIC: {decision.topic}
     - SUBTOPIC: {decision.sub_topic}
     
-    INTERVIEWER CHEAT SHEET (Truth Source):
+    INTERVIEWER CHEAT SHEET (Truth Source retreived from vector DB):
     {refined_context}
 
     AVAILABLE SAMPLE QUESTIONS (Reference only):
     {sample_qs_text}
-    -use relevant sample questions to phrase better questions.
+    -use relevant sample questions to phrase better questions and take inspiration for how to cover topics.
     
     INSTRUCTIONS:
     1. {transition_instr}
@@ -110,10 +110,12 @@ def get_qgen_system_prompt(decision, refined_context, prev_feedback, flags,sampl
 
     RULES:
     - make sure the question and answer generated are relevant to TOPIC and SUBTOPIC.
+    - double check that the expected answer correctly & completely answers the question in reference to cheet sheet and sample questions.
+    - the transition instruction should be very natural human like 1 liner connecting previous feedback/next question/topic.
 
     OUTPUT SCHEMA:
     JSON: {{
-        "question": "The question text",
+        "question": "The question text.max 2 lines",
         "expected_answer": "A 3-4 line answer that completely and perfectly answers the question.double check the answer"
     }}
     """
@@ -142,17 +144,29 @@ ROLE: Strict Support services Grader.
 GOAL: Evaluate user answer vs Expected answer & RAG Context.
 
 INSTRUCTIONS:
-1. Score 0-10.
+{{1. Score 0-10.
    scoring rule: ZERO_SCORE_RULE : completely wrong or irrelevant answer : score 0
-                 FULL_SCORE_RULE : answer is above 80% correct  : score 10                                              
+                 FULL_SCORE_RULE : answer is above 80% correct or phrased differently but cover most of the  main points from expected answer : score 10                                              
 2. FEEDBACK: Create a "Conversational Bridge" for the next turn.
-   - Score < 5: eg : "That's not quite right. We look for [Concept]. or your answer is wrong"
-   - Score 10: eg : "Spot on. You nailed [Concept]. or good answer lets move to next question"
-   - Score 5-9: eg : "You're close, but missed [Gap]. or I expected a better answer"
+   - Score < 5: eg : "like That's not quite right. We look for [Concept]. or your answer is wrong"
+   - Score 10: eg : "like Spot on. You nailed [Concept]. or like good answer lets move to next question"
+   - Score 5-9: eg : "like You're close, but missed [Gap]. or like  I expected..."}}
 
-RULES:
-- When the user answer is phrased differently but has the same meaning as the expected answer with all main points covered,it should be awarded full marks : score 10                                                                  
+RULES TO EVALUATE:
+{{- When the user answer is phrased differently but has the same meaning as the expected answer with all main points covered,it should be awarded full marks : score 10  
+- look for major points covered rather then direct similarity with expected answer}}                                  
 
+NEEDS_PROBE decision parameters : 
+{{SITUATION 1:                                 
+- if user has answered almost 80% of the question correctly, covering almost all major points then no follow up needed.
+SITUATION 2:                                 
+- look for major points covered rather then direct similarity with expected answer,ignore typos 
+- When the user answer missed major points from the expected answer in reference to retreived context ask followup.                                 
+- compare question,user answer,expected_answer,context to come to a conclusion that user may know the answer but as there was no mention in question he might have missed it so lets ask the follow up.  
+- make sure missed points and feedback are correctly mentioned for the follow up agent to generate a good question.                                                                                                                                                                                                                                                                                                
+SITUATION 3:
+- if user has given a complete irrelevant or wrong then go to answer ask followup}}                                   
+                                 
 OUTPUT SCHEMA:
 JSON: {{
     "score": int,
@@ -176,12 +190,16 @@ RAG CONTEXT: {context}
 # 5. SUMMARIZER
 # ==============================================================================
 SUMMARIZER_SYSTEM = SystemMessage(content="""
-ROLE: Hiring Manager.
-GOAL: Final Hiring Decision.
-INPUT: Interview Log.
+ROLE: Final summariser.
+GOAL: Final Summary to the interview focusing on candidates strengths weakness topic by topic.
+INPUT: Interview Log,with each question,answer,score and feedback.
+
+RULES :                                                     
+- Key take aways to include users overall + topicwise performance,strength,weakness
+
 OUTPUT SCHEMA:
 JSON: {{
-    "overall_rating": "Strong Hire" | "Hire" | "No Hire",
+    "overall_rating": "aced" | "passed" | "failed",
     "summary_text": "Executive summary...",
     "key_takeaways": ["..."]
 }}

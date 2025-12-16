@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - KnowGauge</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+    <script>
+        // Guard: Redirect if not admin
+        const role = localStorage.getItem('role');
+        if (role !== 'manager') window.location.href = '/login.html';
+    </script>
+</head>
+<body class="bg-gray-50 h-screen flex flex-col overflow-hidden">
+
+    <!-- Navbar -->
+    <div class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-8 flex-shrink-0">
+        <div class="flex items-center space-x-3">
+            <div class="p-1.5 bg-gray-900 rounded-lg">
+                <i data-lucide="shield-check" class="w-5 h-5 text-white"></i>
+            </div>
+            <h1 class="text-xl font-bold text-gray-900 tracking-tight">Admin<span class="text-gray-400 font-light">Panel</span></h1>
+        </div>
+        <div class="flex items-center space-x-4">
+            <span class="text-sm text-gray-500">Logged in as <span class="font-medium text-gray-900">Admin</span></span>
+            <button onclick="logout()" class="text-xs text-red-500 hover:text-red-700 font-medium px-3 py-1.5 border border-red-100 rounded-md hover:bg-red-50 transition">Logout</button>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="flex flex-1 overflow-hidden">
+        
+        <!-- Sidebar: List of Interviews -->
+        <div class="w-1/3 bg-white border-r border-gray-200 flex flex-col">
+            <div class="p-5 border-b border-gray-100 bg-gray-50/50">
+                <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-1">Candidate Sessions</h2>
+                <p class="text-xs text-gray-400">Select a session to view detailed transcript</p>
+            </div>
+            
+            <div id="sessionList" class="flex-1 overflow-y-auto divide-y divide-gray-100">
+                <!-- Session items will be injected here -->
+                <div class="p-8 text-center text-gray-400 text-sm">Loading sessions...</div>
+            </div>
+        </div>
+
+        <!-- Main Detail Area -->
+        <div class="flex-1 flex flex-col bg-gray-50 overflow-hidden relative">
+            
+            <!-- Empty State -->
+            <div id="emptyState" class="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
+                <i data-lucide="layout-list" class="w-16 h-16 mb-4 text-gray-300"></i>
+                <p class="text-lg font-medium text-gray-500">Select a candidate to view details</p>
+            </div>
+
+            <!-- Content Area (Hidden initially) -->
+            <div id="detailView" class="hidden flex-col h-full">
+                <!-- Header -->
+                <div class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-8 flex-shrink-0">
+                    <div>
+                        <h2 id="detailUser" class="text-lg font-bold text-gray-900">Candidate Name</h2>
+                        <p id="detailTime" class="text-xs text-gray-500">Session ID: <span class="font-mono">...</span></p>
+                    </div>
+                    <div id="detailScoreBadge"></div>
+                </div>
+
+                <!-- Scrollable Container -->
+                <div id="scrollContainer" class="flex-1 overflow-y-auto p-8 space-y-8">
+                    
+                    <!-- 1. Assessment Summary Card -->
+                    <div id="summaryCard" class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+                         <!-- Injected via JS -->
+                    </div>
+
+                    <!-- 2. Transcript -->
+                    <div>
+                        <h3 class="text-sm font-bold text-gray-900 uppercase tracking-wide mb-4 flex items-center">
+                            <i data-lucide="message-square" class="w-4 h-4 mr-2 text-gray-400"></i> Transcript
+                        </h3>
+                        <div id="transcriptContainer" class="space-y-6">
+                            <!-- Turns go here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        function logout() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('role');
+            window.location.href = '/login.html';
+        }
+
+        async function fetchSessions() {
+            const token = localStorage.getItem('token');
+            try {
+                const res = await fetch('/admin/sessions', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!res.ok) throw new Error("Failed to fetch");
+                const data = await res.json();
+                renderSessionList(data);
+            } catch (e) {
+                console.error(e);
+                document.getElementById('sessionList').innerHTML = `<div class="p-4 text-red-500 text-sm">Error loading data.</div>`;
+            }
+        }
+
+        function renderSessionList(sessions) {
+            const listEl = document.getElementById('sessionList');
+            if(sessions.length === 0) {
+                listEl.innerHTML = `<div class="p-8 text-center text-gray-400 text-sm">No interviews recorded yet.</div>`;
+                return;
+            }
+            
+            listEl.innerHTML = sessions.map(s => {
+                const date = new Date(s.start_time).toLocaleDateString();
+                const time = new Date(s.start_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                const rating = s.overall_rating || 'In Progress / Aborted';
+                
+                let badgeColor = 'bg-gray-100 text-gray-600';
+                if(rating === 'aced') badgeColor = 'bg-green-100 text-green-700';
+                if(rating === 'failed') badgeColor = 'bg-red-100 text-red-700';
+                if(rating === 'passed') badgeColor = 'bg-blue-100 text-blue-700';
+                if(rating.includes('Aborted')) badgeColor = 'bg-orange-50 text-orange-600 border border-orange-100';
+
+                return `
+                <div onclick="loadSession('${s.session_id}', '${s.username}', '${s.start_time}', '${rating}')" 
+                     class="group p-5 hover:bg-white cursor-pointer transition-all border-l-4 border-transparent hover:border-gray-900 hover:shadow-sm">
+                    <div class="flex justify-between items-start mb-2">
+                        <span class="font-semibold text-gray-900 group-hover:text-black">${s.username}</span>
+                        <span class="text-[10px] font-medium px-2 py-0.5 rounded-full ${badgeColor} truncate max-w-[100px]">${rating}</span>
+                    </div>
+                    <div class="flex items-center text-xs text-gray-500 space-x-3">
+                        <span class="flex items-center"><i data-lucide="calendar" class="w-3 h-3 mr-1"></i>${date}</span>
+                        <span class="flex items-center"><i data-lucide="clock" class="w-3 h-3 mr-1"></i>${time}</span>
+                    </div>
+                </div>
+                `;
+            }).join('');
+            lucide.createIcons();
+        }
+
+        async function loadSession(sessionId, username, timeStr, rating) {
+            document.getElementById('emptyState').classList.add('hidden');
+            document.getElementById('detailView').classList.remove('hidden');
+            document.getElementById('detailView').classList.add('flex');
+
+            document.getElementById('detailUser').innerText = username;
+            document.getElementById('detailTime').innerHTML = `Started: ${new Date(timeStr).toLocaleString()} <span class="mx-2">|</span> ID: <span class="font-mono text-gray-400">${sessionId.substring(0,8)}...</span>`;
+            
+            // Render Badge in Header
+            let badgeClass = "bg-gray-100 text-gray-700 border-gray-200";
+            if(rating === 'aced') badgeClass = "bg-green-50 text-green-700 border-green-200";
+            else if(rating === 'failed') badgeClass = "bg-red-50 text-red-700 border-red-200";
+            else if(rating.includes('Aborted')) badgeClass = "bg-orange-50 text-orange-700 border-orange-200";
+            
+            document.getElementById('detailScoreBadge').innerHTML = `<span class="px-3 py-1 rounded-full border text-xs font-semibold uppercase tracking-wider ${badgeClass}">${rating}</span>`;
+
+            // Loading State
+            document.getElementById('transcriptContainer').innerHTML = `<div class="flex items-center justify-center h-20"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div></div>`;
+            document.getElementById('summaryCard').innerHTML = `<div class="text-gray-400 text-sm text-center">Loading Summary...</div>`;
+
+            try {
+                const token = localStorage.getItem('token');
+                const res = await fetch(`/admin/session/${sessionId}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await res.json();
+                
+                renderSummary(data.metrics, data.summary);
+                renderTranscript(data.turns);
+            } catch (e) {
+                console.error(e);
+                document.getElementById('transcriptContainer').innerHTML = `<div class="text-red-500">Failed to load transcript.</div>`;
+            }
+        }
+
+        function renderSummary(metrics, summaryData) {
+            const container = document.getElementById('summaryCard');
+            
+            if (!metrics) {
+                container.innerHTML = `<div class="text-center py-6 text-gray-500">No data recorded for this session yet.</div>`;
+                return;
+            }
+
+            const isAborted = !summaryData;
+            const summaryText = summaryData ? summaryData.summary_text : "This session was stopped before a final summary could be generated. Metrics shown are calculated from the available partial transcript.";
+            const warningBanner = isAborted ? `<div class="mb-4 p-3 bg-orange-50 border border-orange-100 rounded-lg text-xs text-orange-700 flex items-center"><i data-lucide="alert-triangle" class="w-4 h-4 mr-2"></i> Session Aborted / Incomplete</div>` : '';
+
+            container.innerHTML = `
+                ${warningBanner}
+                <div class="flex flex-col md:flex-row gap-8">
+                    <!-- Left: Metrics -->
+                    <div class="flex-1">
+                        <div class="flex items-center justify-between mb-6 bg-gray-50 p-4 rounded-lg border border-gray-100">
+                            <div>
+                                <p class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Total Score</p>
+                                <p class="text-3xl font-bold text-gray-900 mt-1">${metrics.total_score} <span class="text-sm text-gray-400 font-normal">/ ${metrics.max_possible_score}</span></p>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Performance</p>
+                                <p class="text-3xl font-bold mt-1 ${metrics.overall_percentage >= 70 ? 'text-green-600' : 'text-orange-600'}">${metrics.overall_percentage}%</p>
+                            </div>
+                        </div>
+                        
+                        <div class="overflow-hidden rounded-lg border border-gray-200">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-100">
+                                    <tr>
+                                        <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Topic</th>
+                                        <th scope="col" class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Q's</th>
+                                        <th scope="col" class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Avg Score</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-200 bg-white">
+                                    ${metrics.section_breakdown.map(section => `
+                                        <tr>
+                                            <td class="px-3 py-2 whitespace-nowrap text-xs font-medium text-gray-800">${section.topic}</td>
+                                            <td class="px-3 py-2 whitespace-nowrap text-xs text-gray-500 text-center">${section.questions_asked}</td>
+                                            <td class="px-3 py-2 whitespace-nowrap text-xs text-gray-600 text-center">
+                                                <span class="${section.average_score >= 8 ? 'text-green-600 font-bold' : 'text-gray-800'}">${section.average_score}</span>
+                                                <span class="text-gray-400">/10</span>
+                                            </td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Right: Text Summary -->
+                    <div class="flex-1 border-l border-gray-100 pl-8">
+                        <h4 class="text-xs font-bold text-gray-900 uppercase tracking-wide mb-3">Executive Summary</h4>
+                        <p class="text-sm text-gray-600 leading-relaxed">${summaryText}</p>
+                    </div>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        function renderTranscript(turns) {
+            const container = document.getElementById('transcriptContainer');
+            if(!turns || turns.length === 0) {
+                container.innerHTML = `<div class="text-center text-gray-400 mt-10">No questions asked yet in this session.</div>`;
+                return;
+            }
+
+            container.innerHTML = turns.map((t, index) => {
+                const scoreColor = t.score >= 8 ? 'text-green-600' : (t.score >= 5 ? 'text-orange-500' : 'text-red-500');
+                
+                return `
+                <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                    <!-- Header: Question -->
+                    <div class="bg-gray-50/50 p-4 border-b border-gray-100">
+                        <div class="flex justify-between items-start">
+                            <h3 class="text-sm font-semibold text-gray-900 pr-4">Q${index+1}: ${t.question}</h3>
+                            <span class="text-xs font-mono text-gray-400 bg-white border border-gray-200 px-2 py-0.5 rounded">${t.topic}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="p-6 space-y-4">
+                        <!-- User Answer -->
+                        <div>
+                            <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Candidate Answer</p>
+                            <p class="text-sm text-gray-800 leading-relaxed">${t.user_answer}</p>
+                        </div>
+
+                        <!-- Analysis Grid -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                            <div class="bg-gray-50 rounded-lg p-3 border border-gray-100">
+                                <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Score</p>
+                                <p class="text-xl font-bold ${scoreColor}">${t.score}<span class="text-sm text-gray-400 font-normal">/10</span></p>
+                            </div>
+                            <div class="bg-gray-50 rounded-lg p-3 border border-gray-100">
+                                <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Feedback</p>
+                                <p class="text-xs text-gray-600">${t.evaluation_feedback}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                `;
+            }).join('');
+        }
+
+        // Initial Load
+        fetchSessions();
+    </script>
+</body>
+</html>

@@ -4,16 +4,19 @@ import logging
 import sys
 import json
 import operator
-from datetime import datetime
+import bcrypt 
+from datetime import datetime, timedelta
 import httpx
 from typing import List, Dict, Any, Optional, Annotated, Literal
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
+from jose import JWTError, jwt
 
 # --- LangChain & LangGraph Imports ---
 from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
@@ -26,7 +29,6 @@ from langchain_core.globals import set_debug
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.runnables import RunnableLambda
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_core.outputs import ChatResult, ChatGeneration
 from urllib.parse import urlparse, urlunparse
 # --- Database Import ---
@@ -53,6 +55,24 @@ def check_env_vars():
         sys_logger.error("FATAL ERROR: Missing Azure environment variables.")
         exit(1)
 check_env_vars()
+
+# ==============================================================================
+# AUTH CONFIGURATION
+# ==============================================================================
+SECRET_KEY = "YOUR_SUPER_SECRET_KEY_CHANGE_THIS" 
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    role: str
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
 
 # ==============================================================================
 # 1. HIGH-FIDELITY LOGGER
@@ -105,7 +125,6 @@ class InterviewLogger:
                 log_buffer.append(str(prompt_data))
 
         if output:
-            # Remove heavy objects from output log
             clean_output = {k: v for k, v in output.items() if k != "message_history"}
             log_buffer.append(f"\n✅ OUTPUT:\n{InterviewLogger._format_json(clean_output)}")
         
@@ -130,7 +149,7 @@ class TopicDecision(BaseModel):
     is_first_turn: bool = Field(False)
 
 class GeneratedQuestion(BaseModel):
-    conversational_entry: str = Field(..., description="The social bridge")
+    conversational_entry: str = Field(..., description="The bridge to previous feeback and next question/topic")
     technical_question: str = Field(..., description="The actual interview question.")
     expected_answer: str
     question_source: Literal["sample_question", "generated_from_context"] = Field(..., description="Source of the question.")
@@ -143,13 +162,13 @@ class EvaluationResult(BaseModel):
     decision: Literal["accepted", "needs_probe"] 
 
 class FinalSummary(BaseModel):
-    overall_rating: Literal["Strong Hire", "Hire", "No Hire"]
+    overall_rating: Literal["aced", "passed", "failed"]
     summary_text: str
     key_takeaways: List[str]
 
 class RelevanceCheck(BaseModel):
     status: Literal["sufficient", "partial", "irrelevant"]
-    reason: str
+    reason: str = Field(description="MAX 1 Line")
     refined_context: Optional[str]
     search_query: Optional[str]
 
@@ -195,79 +214,6 @@ class InterviewState(TypedDict):
     original_expected_answer: str    # The full answer we are looking for
     last_missed_points: List[str]
 
-# class AzureResponsesChat(BaseChatModel):
-#     """
-#     Custom Adapter for Azure 'Responses API' (Preview).
-#     Docs: https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/responses-api
-#     """
-#     endpoint: str
-#     api_key: str
-#     api_version: str = "2025-03-01-preview" 
-#     deployment_name: str
-    
-#     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-#         raise NotImplementedError("Use ainvoke() for async execution")
-
-#     @property
-#     def _llm_type(self):
-#         return "azure-responses-custom"
-
-#     async def _agenerate(self, messages: List[BaseMessage], stop=None, run_manager=None, **kwargs) -> ChatResult:
-#         # 1. Format Input as List of Dictionaries
-#         formatted_input = []
-#         for m in messages:
-#             role = "user"
-#             if isinstance(m, AIMessage): role = "assistant"
-#             elif isinstance(m, SystemMessage): role = "developer"
-#             else: role = "user"
-            
-#             formatted_input.append({"role": role, "content": m.content})
-
-#         # 2. Construct URL Robustly
-#         # Extract strictly the base (https://resource.azure.com) to avoid path duplication
-#         parsed_url = urlparse(self.endpoint)
-#         base_url = urlunparse((parsed_url.scheme, parsed_url.netloc, "", "", "", ""))
-        
-#         # Construct the correct Responses API path
-#         url = f"{base_url}/openai/v1/responses?api-version={self.api_version}"
-
-#         # 3. Request Payload
-#         payload = {
-#             "model": self.deployment_name,
-#             "input": formatted_input,
-#             "stream": False
-#         }
-
-#         # 4. Execute Request
-#         headers = {
-#             "Content-Type": "application/json",
-#             "api-key": self.api_key
-#         }
-        
-#         async with httpx.AsyncClient() as client:
-#             try:
-#                 resp = await client.post(url, json=payload, headers=headers, timeout=60.0)
-#                 resp.raise_for_status()
-#                 data = resp.json()
-                
-#                 # 5. Parse Output
-#                 content = ""
-#                 if "output" in data and len(data["output"]) > 0:
-#                     first_item = data["output"][0]
-#                     if "content" in first_item and len(first_item["content"]) > 0:
-#                         content = first_item["content"][0].get("text", "")
-                
-#                 if not content:
-#                     sys_logger.error(f"Unexpected JSON structure: {data}")
-#                     content = "Error: Empty response from model."
-
-#                 return ChatResult(generations=[ChatGeneration(message=AIMessage(content=content))])
-                
-#             except httpx.HTTPStatusError as e:
-#                 sys_logger.error(f"Azure API Error: {e.response.text}")
-#                 raise ValueError(f"Azure API Error {e.response.status_code}: {e.response.text}")
-
-
 # Load Topics
 TOPIC_DATA = {}
 try:
@@ -275,18 +221,19 @@ try:
         TOPIC_DATA = json.load(f)
 except Exception as e:
     sys_logger.error(f"Could not load topics.json: {e}")
-    exit(1)
+    # Fallback default topics if file missing
+    TOPIC_DATA = {
+        "Incident Management": {"sub_topics": ["Definition", "Process"], "sample_questions": ["What is an incident?"]},
+    }
 
 simple_db.init_db()
 
 # LLM Setup
-# --- REPLACED CLIENT ---
 llm_client = AzureChatOpenAI(
-    azure_deployment=os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"), # e.g. "gpt-5.1-chat"
+    azure_deployment=os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"),
     api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
-    azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"), # Must be: https://YOUR-RESOURCE.cognitiveservices.azure.com/
-    api_version="2024-08-01-preview", # Stable version for Global Standard
-   
+    azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"), 
+    api_version="2024-08-01-preview", 
 )
 
 # Chroma Setup
@@ -312,31 +259,6 @@ async def retrieve_context_tool(query: str) -> str:
         return "\n\n".join([d.page_content for d in docs]) or "No data found."
     except Exception as e:
         return f"Search Error: {e}"
-    
-
-# Helper to inject instructions and parse manually
-def create_robust_chain(llm, pydantic_cls):
-    from langchain_core.output_parsers import PydanticOutputParser
-    from langchain_core.runnables import RunnableLambda
-    
-    parser = PydanticOutputParser(pydantic_object=pydantic_cls)
-    
-    def _inject_instructions(inputs):
-        msgs = list(inputs)
-        # We append instructions to the last message content
-        # This ensures the model sees the schema requirement
-        instr = f"\n\nIMPORTANT: Return valid JSON matching this schema:\n{parser.get_format_instructions()}"
-        
-        if msgs and isinstance(msgs[-1], HumanMessage):
-            # Modify last user message
-            existing = msgs[-1].content
-            msgs[-1] = HumanMessage(content=existing + instr)
-        else:
-            # Fallback
-            msgs.append(HumanMessage(content=f"Instructions: {instr}"))
-        return msgs
-
-    return RunnableLambda(_inject_instructions) | llm | parser
 
 # Define chains
 llm_eval = llm_client.with_structured_output(EvaluationResult)
@@ -345,22 +267,16 @@ llm_sum = llm_client.with_structured_output(FinalSummary)
 llm_check = llm_client.with_structured_output(RelevanceCheck)
 
 # ==============================================================================
-# 5. NODES (Refactored)
+# 5. NODES 
 # ==============================================================================
 
-# --- NODE: EVALUATE ---
 async def node_evaluate(state: InterviewState) -> Dict[str, Any]:
-    # 1. Check if we are in Round 2 (Probe Mode)
     if state.get("is_in_probe_mode"):
-        # MERGE ANSWERS: Context from Turn 1 + New Answer from Turn 2
         full_answer = f"{state['partial_answer_context']} . Follow-up clarification: {state['candidate_answer']}"
         question = state['original_question']
         expected = state['original_expected_answer']
-        
-        # Force decision to "accepted" because we don't want infinite loops
         forced_decision = True 
     else:
-        # Round 1 (Standard)
         full_answer = state['candidate_answer']
         question = state.get('last_question', "Intro")
         expected = state.get('last_expected_answer', "N/A")
@@ -368,45 +284,38 @@ async def node_evaluate(state: InterviewState) -> Dict[str, Any]:
 
     context = state.get('refined_context') or state.get('retrieved_context', "N/A")
     
-    # Call LLM
     user_msg_content = prompts.EVALUATOR_USER_TEMPLATE.format(
         question=question, answer=full_answer, expected=expected, context=context
     )
     msgs = [prompts.EVALUATOR_SYSTEM, HumanMessage(content=user_msg_content)]
     eval_result = await llm_eval.ainvoke(msgs)
     
-    # OUTPUT LOGIC
     output = {}
     
-    # CASE A: Needs Probe (And not already forced)
     if eval_result.decision == "needs_probe" and not forced_decision:
         output = {
             "is_in_probe_mode": True,
             "partial_answer_context": full_answer,
             "original_question": question,
             "original_expected_answer": expected,
-            "last_missed_points": eval_result.missed_points, # Pass to FollowUp Node
-            # We do NOT log to DB yet. We wait for the final score.
+            "last_missed_points": eval_result.missed_points, 
         }
         sys_logger.info(f"🧐 EVALUATOR: Partial answer detected. Triggering Probe.")
-        
-    # CASE B: Accepted (Or Round 2 Complete)
     else:
-        # Now we Log to DB (It's the final verdict)
         simple_db.log_turn_data(
             session_id=state['session_id'],
             topic=state['current_decision'].topic,
             sub_topic=state['current_decision'].sub_topic,
             question=question,
             expected_answer=expected,
-            user_answer=full_answer, # Log the MERGED answer
+            user_answer=full_answer, 
             score=eval_result.score,
             evaluation_feedback=eval_result.evaluation,
             metadata=eval_result.model_dump()
         )
         
         output = {
-            "is_in_probe_mode": False, # Reset Flag
+            "is_in_probe_mode": False, 
             "graded_answers": [{"score": eval_result.score, "topic": state['current_decision'].topic}],
             "last_turn_feedback": eval_result.feedback_for_next_node,
             "message_history": state.get('message_history', []) + [HumanMessage(content=state['candidate_answer'])]
@@ -415,51 +324,44 @@ async def node_evaluate(state: InterviewState) -> Dict[str, Any]:
 
     return output
 
-# ---NODE: FOLLOW_UP ---
-# In main.py
-
 async def node_ask_followup(state: InterviewState) -> Dict[str, Any]:
-    # 1. Retrieve Data from State
     missed = state.get("last_missed_points", [])
     original_q = state.get("original_question")
-    original_expected = state.get("original_expected_answer") # <--- NOW USING THIS
+    original_expected = state.get("original_expected_answer")
     user_partial = state.get("partial_answer_context")
 
-    # 2. Build Prompt
-    # We give the LLM the "Truth" (Expected) so it knows what to hint at without giving it away.
     prompt = f"""
-    ROLE: Senior Interviewer.
-    GOAL: Ask a follow-up to a partial answer.
+    ROLE: OnCall Support Services Interviewer.
+    GOAL: Ask a follow-up question to the partial answer given by user for the user to know what all points are expected in the expected answer other then the answer given.
     
     CONTEXT:
     - Question Asked: "{original_q}"
     - User's Partial Answer: "{user_partial}"
     - The Missing Truth (Expected): "{original_expected}"
     - Specific Missed Concepts: {missed}
+
+    ||  ""THE MOST IMPORTANT REASON FOR A FOLLOW UP IS TO HELP USER COVER THE MISSED POINTS OF EXPECTED ANSWER THAT THEY UNKNOWNINGLY MISSED""  ||
     
     INSTRUCTIONS:
-    1. Acknowledge the part they got right (briefly).
-    2. Ask a targeted follow-up question that nudges them toward the "Missing Truth".
-    3. CONSTRAINT: Do NOT reveal the answer. Just ask for clarification.
-    
-    EXAMPLE:
-    "You correctly identified X, but how does Y fit into this process?"
+    - the follow up question should be MAX 1-2 line. question should be framed in a way that its answer should be 1 word pointing to the missed point or one liner or 2 liner answer expected at MAX. 
+    - check for if main question particularly asked for this missed point or user missed it and acknowledge accordingly.
+    - make sure the follow up question doesnot contain answer in itself 
+    SITUATION 1:
+    - user answered almost correctly and missed 1 major point,ask a brief follow up to test if user can answer a simple question related to that point.compare user's answer to expected answer.
+    SITUATION 2:
+    - user missed many major points,ask if he understood the main question? + ask a follow up to test whether user can answer these topics with a difficult situation based question.compare user answer to expected answer.
+    SITUATION 3:
+    - user gave completely irrelevant answer, ask if user understood the question + pick one simple point missed and ask a simple follow up question.
     """
     
-    # 3. Generate Question
     msg = await llm_client.ainvoke([SystemMessage(content=prompt)])
-    
-    # 4. Update History (So the user sees the question)
     new_hist = state.get('message_history', [])
     new_hist.append(AIMessage(content=msg.content))
-    
-    # 5. Return (This stops the graph and sends 'agent_message' to UI)
     return {
         "agent_message": msg.content,
         "message_history": new_hist
     }
 
-# --- NODE: STRATEGIST ---
 async def node_strategize(state: InterviewState) -> Dict[str, Any]:
     grades = state.get("graded_answers", [])
     plan = state['topic_plan']
@@ -468,7 +370,6 @@ async def node_strategize(state: InterviewState) -> Dict[str, Any]:
     output = {}
     
     if not grades:
-        # First Turn Logic
         first_topic = next((t for t, s in plan.items() if s == "pending"), None)
         if not first_topic:
             output = {"current_decision": TopicDecision(action="end_interview", reasoning="None")}
@@ -490,7 +391,6 @@ async def node_strategize(state: InterviewState) -> Dict[str, Any]:
                 "current_search_query": None
             }
     else:
-        # Progression Logic
         last_score = grades[-1]['score']
         low_streak = state.get('consecutive_low_scores', 0)
         low_streak = (low_streak + 1) if last_score < 5 else 0
@@ -502,7 +402,7 @@ async def node_strategize(state: InterviewState) -> Dict[str, Any]:
         decision = None
         new_idx = current_idx
         
-        if low_streak >= 2: # Mercy Pivot
+        if low_streak >= 2: 
             new_plan[active_topic] = "failed"
             next_t = next((t for t, s in new_plan.items() if s == "pending"), None)
             if next_t:
@@ -516,7 +416,7 @@ async def node_strategize(state: InterviewState) -> Dict[str, Any]:
             else:
                 decision = TopicDecision(action="end_interview", reasoning="Failed")
         
-        elif new_idx + 1 < len(sub_topics): # Next Subtopic
+        elif new_idx + 1 < len(sub_topics): 
             new_idx += 1
             decision = TopicDecision(
                 action="ask_question", topic=active_topic, sub_topic=sub_topics[new_idx], 
@@ -524,7 +424,7 @@ async def node_strategize(state: InterviewState) -> Dict[str, Any]:
                 is_new_main_topic=False, is_last_in_topic=(new_idx + 1 == len(sub_topics))
             )
             
-        else: # Next Main Topic
+        else: 
             new_plan[active_topic] = "complete"
             next_t = next((t for t, s in new_plan.items() if s == "pending"), None)
             if next_t:
@@ -551,7 +451,6 @@ async def node_strategize(state: InterviewState) -> Dict[str, Any]:
     logger.log_node_exec("strategize", state, prompt_data="Logic Block", output=output)
     return output
 
-# --- NODE: RETRIEVE ---
 async def node_retrieve(state: InterviewState) -> Dict[str, Any]:
     decision = state['current_decision']
     query = state.get("current_search_query") or f"{decision.topic} {decision.sub_topic} definition steps process"
@@ -564,12 +463,10 @@ async def node_retrieve(state: InterviewState) -> Dict[str, Any]:
     logger.log_node_exec("retrieve", state, prompt_data=f"Query: {query}", output=output)
     return output
 
-# --- NODE: VALIDATE ---
 async def node_validate(state: InterviewState) -> Dict[str, Any]:
     decision = state['current_decision']
     context = state['retrieved_context']
     
-    # Use template from prompts.py
     user_msg_content = prompts.VALIDATION_USER_TEMPLATE.format(
         topic=decision.topic,
         sub_topic=decision.sub_topic,
@@ -577,7 +474,6 @@ async def node_validate(state: InterviewState) -> Dict[str, Any]:
     )
     
     msgs = [prompts.VALIDATION_SYSTEM, HumanMessage(content=user_msg_content)]
-    
     res = await llm_check.ainvoke(msgs)
     
     output = {
@@ -588,14 +484,12 @@ async def node_validate(state: InterviewState) -> Dict[str, Any]:
     logger.log_node_exec("validate", state, prompt_data=msgs, output=output)
     return output
 
-# --- NODE: GENERATE ---
 async def node_generate(state: InterviewState) -> Dict[str, Any]:
     decision = state['current_decision']
     refined_context = state.get('refined_context')
     prev_feedback = state.get('last_turn_feedback', "Let's begin.")
     is_valid = state.get('is_context_valid', True)
     
-    # Fetch Sample Questions from TOPIC_DATA
     topic_info = TOPIC_DATA.get(decision.topic, {})
     sample_questions = topic_info.get("sample_questions", [])
     sample_qs_text = "\n".join([f"- {q}" for q in sample_questions])
@@ -607,22 +501,16 @@ async def node_generate(state: InterviewState) -> Dict[str, Any]:
         "is_context_valid": is_valid
     }
     
-    # Call the logic from prompts.py with sample questions
     prompt_str = prompts.get_qgen_system_prompt(decision, refined_context, prev_feedback, flags, sample_qs_text)
-    
     msgs = [SystemMessage(content=prompt_str)]
-    
     gen = await llm_gen.ainvoke(msgs)
     
-    # Log usage of sample questions
     if gen.question_source == "sample_question":
         sys_logger.info(f"📌 Using Sample Question for {decision.sub_topic}: {gen.technical_question}")
     else:
         sys_logger.info(f"⚡ Generating New Question for {decision.sub_topic}")
 
-    # Combine conversational entry + question for natural flow
     full_message = f"{gen.conversational_entry} {gen.technical_question}"
-    
     new_hist = state.get('message_history', [])
     new_hist.append(AIMessage(content=full_message))
     
@@ -636,8 +524,6 @@ async def node_generate(state: InterviewState) -> Dict[str, Any]:
     }
     logger.log_node_exec("generate", state, prompt_data=msgs, output=output)
     return output
-
-# ... existing imports ...
 
 def calculate_interview_metrics(turns: List[Dict]) -> Dict[str, Any]:
     """Calculates quantitative metrics from interview turns."""
@@ -659,9 +545,8 @@ def calculate_interview_metrics(turns: List[Dict]) -> Dict[str, Any]:
         by_topic[topic]["count"] += 1
         
         total_score += score
-        total_max_score += 10 # Assuming 10 is max per question
+        total_max_score += 10 
 
-    # Calculate averages per topic
     section_breakdown = []
     for topic, data in by_topic.items():
         avg = data["score_sum"] / data["count"] if data["count"] > 0 else 0
@@ -683,20 +568,14 @@ def calculate_interview_metrics(turns: List[Dict]) -> Dict[str, Any]:
         "section_breakdown": section_breakdown
     }
 
-# ... rest of code ...
-
-# --- NODE: SUMMARIZE ---
 async def node_summarize(state: InterviewState) -> Dict[str, Any]:
     all_turns = simple_db.get_turn_data(state['session_id'])
     
-    # 1. Calculate Metrics Pythonically
     metrics = calculate_interview_metrics(all_turns)
     
-    # 2. Prepare Context for LLM
     log_str = str([{ "topic": t['topic'], "score": t['score'], "feedback": t['evaluation_feedback']} for t in all_turns])
     stats_summary = f"\nSTATS: Total Score: {metrics['total_score']}/{metrics['max_possible_score']} ({metrics['overall_percentage']}%)"
     
-    # 3. Invoke LLM
     msgs = [
         prompts.SUMMARIZER_SYSTEM, 
         HumanMessage(content=f"{prompts.SUMMARIZER_USER_PREFIX}{log_str} {stats_summary}")
@@ -705,9 +584,8 @@ async def node_summarize(state: InterviewState) -> Dict[str, Any]:
     summary = await llm_sum.ainvoke(msgs)
     simple_db.save_summary(state['session_id'], summary.overall_rating, summary.summary_text)
     
-    # 4. Return combined data (LLM Summary + Calculated Metrics)
     final_output = summary.model_dump()
-    final_output["metrics"] = metrics # Inject metrics here
+    final_output["metrics"] = metrics 
     
     output = {"final_summary": final_output, "is_interview_over": True}
     logger.log_node_exec("summarize", state, prompt_data=msgs, output=output)
@@ -745,16 +623,14 @@ def route_validate(state):
     elif state.get("retrieval_attempts", 0) < 2:
         return "retrieve"
     else:
-        return "generate" # Fallback
+        return "generate" 
     
 def route_evaluate(state):
     if state.get("is_in_probe_mode"):
         return "ask_followup"
     return "strategize"    
 
-# Simplified Edges (No Intent Router)
 workflow.add_conditional_edges(START, route_start, {"evaluate": "evaluate", "strategize": "strategize"})
-# workflow.add_edge("evaluate", "strategize")
 workflow.add_conditional_edges("strategize", route_strategy, {"summarize": "summarize", "retrieve": "retrieve"})
 workflow.add_edge("retrieve", "validate")
 workflow.add_conditional_edges("validate", route_validate, {"generate": "generate", "retrieve": "retrieve"})
@@ -770,22 +646,85 @@ workflow.add_edge("ask_followup", END)
 memory = MemorySaver()
 
 # ==============================================================================
-# 7. API
+# 7. API AUTH HELPERS
+# ==============================================================================
+
+def verify_password(plain_password, hashed_password):
+    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        role: str = payload.get("role")
+        if username is None:
+            raise credentials_exception
+        return {"username": username, "role": role}
+    except JWTError:
+        raise credentials_exception
+
+# ==============================================================================
+# 8. API ENDPOINTS
 # ==============================================================================
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-@app.get("/")
-async def get_ui(): return FileResponse("index.html")
-
 class NextRequest(BaseModel):
     candidate_id: str
     answer: str
 
+@app.get("/")
+async def get_ui(): return FileResponse("index.html")
+
+@app.get("/login.html")
+async def get_login(): return FileResponse("login.html")
+
+@app.get("/admin.html")
+async def get_admin_ui(): return FileResponse("admin.html")
+
+@app.post("/register")
+async def register(user: UserLogin):
+    success = simple_db.create_user(user.username, user.password, role="candidate")
+    if not success:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    return {"message": "User created successfully"}
+
+@app.post("/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = simple_db.get_user(form_data.username)
+    if not user or not verify_password(form_data.password, user['password_hash']):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token = create_access_token(
+        data={"sub": user['username'], "role": user['role']}
+    )
+    return {"access_token": access_token, "token_type": "bearer", "role": user['role']}
+
 @app.post("/interview/start")
-async def start_interview():
+async def start_interview(current_user: dict = Depends(get_current_user)):
+    if current_user['role'] == 'manager':
+         return {"agent_message": "ACCESS DENIED: Managers cannot take interviews. Please log in as a candidate."}
+
     session_id = str(uuid4())
+    simple_db.log_session_start(session_id, current_user['username'])
+
     init_state = {
         "session_id": session_id,
         "topic_plan": {k: "pending" for k in TOPIC_DATA.keys()},
@@ -803,7 +742,7 @@ async def start_interview():
     return {"candidate_id": session_id, "agent_message": output.get("agent_message")}
 
 @app.post("/interview/next")
-async def next_step(req: NextRequest):
+async def next_step(req: NextRequest, current_user: dict = Depends(get_current_user)):
     config = {"configurable": {"thread_id": req.candidate_id}}
     app_graph = workflow.compile(checkpointer=memory)
     output = await app_graph.ainvoke({"candidate_answer": req.answer}, config=config)
@@ -814,7 +753,7 @@ async def next_step(req: NextRequest):
     }
 
 @app.get("/interview/state/{candidate_id}")
-async def get_interview_state(candidate_id: str):
+async def get_interview_state(candidate_id: str, current_user: dict = Depends(get_current_user)):
     turns = simple_db.get_turn_data(candidate_id)
     config = {"configurable": {"thread_id": candidate_id}}
     app_graph = workflow.compile(checkpointer=memory)
@@ -822,17 +761,40 @@ async def get_interview_state(candidate_id: str):
     final_summary_data = None
     try:
         snap = await app_graph.aget_state(config)
-        # Check if final_summary exists in state
         if snap.values.get("final_summary"):
             final_summary_data = snap.values.get("final_summary")
-            
-            # If metrics weren't saved in state (e.g. older sessions), calculate them now
             if "metrics" not in final_summary_data:
                 final_summary_data["metrics"] = calculate_interview_metrics(turns)
     except:
         pass
         
     return {"candidate_id": candidate_id, "interview_turns": turns, "final_summary": final_summary_data}
+
+# --- Admin Endpoints ---
+
+@app.get("/admin/sessions")
+async def get_all_sessions(current_user: dict = Depends(get_current_user)):
+    if current_user['role'] != 'manager':
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    return simple_db.get_all_sessions_for_admin()
+
+@app.get("/admin/session/{session_id}")
+async def get_session_details(session_id: str, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] != 'manager':
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    
+    turns = simple_db.get_turn_data(session_id)
+    summary_row = simple_db.get_summary(session_id)
+    
+    # Calculate metrics on the fly (Handles abruptly stopped sessions)
+    metrics = calculate_interview_metrics(turns)
+    
+    return {
+        "session_id": session_id, 
+        "turns": turns, 
+        "metrics": metrics,
+        "summary": summary_row
+    }
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

@@ -2,12 +2,8 @@
     "Incident Management": {
       "sub_topics": [
         "Incident lifecycle",
-        "Priorities / it's resolution and acceptance timing",
-        "technical incident lead",
-        "Three strike rules",
-        "GFS(Global Frontline Support)",
-        "NSI P2",
-        "Exception process for the SLA failed tickets"
+        "Priorities / it's resolution and acceptance timing"
+        
         
       ],
       "sample_questions": [
@@ -28,9 +24,8 @@
     },
     "Problem Management": {
       "sub_topics": [
-        "Problem lifecycle",
-        "Root Cause Analysis (RCA)",
-        "Known Errors"
+        "Problem lifecycle"
+        
       ],
       "sample_questions": [
         "What is the difference between an Incident and a Problem?",
