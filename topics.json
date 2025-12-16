@@ -2,7 +2,12 @@
     "Incident Management": {
       "sub_topics": [
         "Incident lifecycle",
-        "Priorities / it's resolution and acceptance timing"
+        "Priorities / it's resolution and acceptance timing",
+        "technical incident lead",
+        "Three strike rules",
+        "GFS(Global Frontline Support)",
+        "NSI P2",
+        "Exception process for the SLA failed tickets"
         
       ],
       "sample_questions": [

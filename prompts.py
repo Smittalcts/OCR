@@ -147,8 +147,8 @@ INSTRUCTIONS:
                  FULL_SCORE_RULE : answer is above 80% correct  : score 10                                              
 2. FEEDBACK: Create a "Conversational Bridge" for the next turn.
    - Score < 5: eg : "That's not quite right. We look for [Concept]. or your answer is wrong"
-   - Score > 8: eg : "Spot on. You nailed [Concept]. or good answer lets move to next question"
-   - Score 5-7: eg : "You're close, but missed [Gap]. or I expected a better answer"
+   - Score 10: eg : "Spot on. You nailed [Concept]. or good answer lets move to next question"
+   - Score 5-9: eg : "You're close, but missed [Gap]. or I expected a better answer"
 
 RULES:
 - When the user answer is phrased differently but has the same meaning as the expected answer with all main points covered,it should be awarded full marks : score 10                                                                  
